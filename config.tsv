@@ -1,2 +1,2 @@
-port	PID_path	retry_count	cycle_duration_sec	cycle_duration_nsec	private_db_file	public_db_file
-49177	/var/run/stp.pid	3	5	0	/etc/controller/stp/data.db	/etc/controller/public.db
+port	PID_path	cycle_duration_sec	cycle_duration_nsec	private_db_file	public_db_file
+49179	/var/run/stp.pid	1	0	/etc/controller/stp/data.db	/etc/controller/public.db

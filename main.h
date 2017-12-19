@@ -1,6 +1,6 @@
 
-#ifndef REGSMP_MAIN_H
-#define REGSMP_MAIN_H
+#ifndef STP_MAIN_H
+#define STP_MAIN_H
 
 
 #include "lib/dbl.h"
@@ -25,11 +25,12 @@
 #endif
 #define CONFIG_FILE "" CONF_DIR "config.tsv"
 
-#define PROG_FIELDS "id,peer_id,first_repeat_id,remote_id,enable,load"
+#define PROG_FIELDS "id,peer_id,first_repeat_id,remote_id,\"check\",retry_count,enable,load"
 
 #define WAIT_RESP_TIMEOUT 3
-
+#define DBC 30000
 #define MODE_SIZE 3
+#define PRECISION 0.01 
 
 #define NANO_FACTOR 0.000000001
 
@@ -41,13 +42,17 @@
 #define CHANGE_MODE_EVEN_STR "even"
 #define CHANGE_MODE_INSTANT_STR "instant"
 
-#define PROG_LIST_LOOP_DF Prog *curr = prog_list.top;
-#define PROG_LIST_LOOP_ST while (curr != NULL) {
-#define PROG_LIST_LOOP_SP curr = curr->next; } curr = prog_list.top;
+#define PROG_LIST_LOOP_DF {Prog *item = prog_list.top;
+#define PROG_LIST_LOOP_ST while (item != NULL) {
+#define PROG_LIST_LOOP_SP item = item->next; } item = prog_list.top;}
 
 typedef struct {
     Peer *peer;
     int remote_id;
+    int check;
+    int retry_count;
+    int state;
+    int crepeat;
 } Slave;
 
 typedef struct {
@@ -91,7 +96,7 @@ struct prog_st {
 
 typedef struct prog_st Prog;
 
-DEF_LLIST(Prog)
+DEC_LLIST(Prog)
 
 typedef struct {
     sqlite3 *db;
@@ -108,6 +113,8 @@ enum {
     DISABLE,
     DONE,
     CLEAR,
+    WAIT,
+    CHECK,
     CREP,
     NSTEP,
     FSTEP,
@@ -119,8 +126,9 @@ enum {
     STOP_KIND_TIME,
     STOP_KIND_GOAL,
     UNKNOWN,
-    FAILURE
-} StateRuntime;
+    FAILURE,
+    ENABLED,DISABLED
+} States;
 
 
 

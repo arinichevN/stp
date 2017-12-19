@@ -20,21 +20,19 @@ int config_checkPeerList(const PeerList *list) {
 
 static int getPeerList_callback(void *data, int argc, char **argv, char **azColName) {
     PeerData *peer_data = data;
-    int port = 0;
-    char addr_str[NAME_SIZE];
     int i;
     for (i = 0; i < argc; i++) {
         if (strcmp("id", azColName[i]) == 0) {
             memcpy(PDLi.id, argv[i], NAME_SIZE);
         } else if (strcmp("port", azColName[i]) == 0) {
-            port = atoi(argv[i]);
+            PDLi.port = atoi(argv[i]);
         } else if (strcmp("ip_addr", azColName[i]) == 0) {
-            memcpy(addr_str, argv[i], NAME_SIZE);
+            memcpy(PDLi.addr_str, argv[i], LINE_SIZE);
         } else {
             fputs("getPeerList_callback: unknown column\n", stderr);
         }
     }
-    if (!makeClientAddr(&PDLi.addr, addr_str, port)) {
+    if (!makeClientAddr(&PDLi.addr, PDLi.addr_str, PDLi.port)) {
         fprintf(stderr, "getPeerList_callback: ERROR: bad ip address for peer with id=%s\n", PDLi.id);
         peer_data->list->length++;
         return 1;

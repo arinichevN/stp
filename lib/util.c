@@ -1,4 +1,5 @@
 #include "util.h"
+
 void dumpStr(const char *buf) {
     int i;
     for (i = 0; i < strlen(buf); i++) {
@@ -14,7 +15,7 @@ void strnline(char **v) {
         *v = strchr(*v, '\0');
     } else {
         *v = c + 1;
-        if(**v=='\n'){
+        if (**v == '\n') {
             *v = strchr(*v, '\0');
         }
     }
@@ -31,12 +32,12 @@ char * bufCat(char * buf, const char *str, size_t size) {
 }
 
 char * estostr(char *s) {
-    int i,j=0;
+    int i, j = 0;
     int f = 0;
     char ss[strlen(s) + 1];
     memset(ss, 0, sizeof ss);
-    for (i = 0; i < strlen(s)+1; i++) {
-        
+    for (i = 0; i < strlen(s) + 1; i++) {
+
         if (s[i] == '\\') {
             f = 1;
             continue;
@@ -72,4 +73,26 @@ char * estostr(char *s) {
         j++;
     }
     return strcpy(s, ss);
+}
+/*
+absolute difference
+*/
+double adifd(double v1, double v2) {
+    if (v1 > v2) {
+        return v1 - v2;
+    } else if (v2 > v1) {
+        return v2 - v1;
+    }
+    return 0.0;
+}
+
+/*
+check if values are approximately equal
+*/
+int aeq(double v1, double v2, double acr) {
+    double ad = adifd(v1, v2);
+    if (ad > acr) {
+        return 0;
+    }
+    return 1;
 }

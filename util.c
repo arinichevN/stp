@@ -119,74 +119,255 @@ char * getStopKindStr(char state) {
     return "?";
 }
 
-int slaveEnable(Slave *slave) {
-    extern unsigned int retry_count;
-    for (int i = 0; i < retry_count; i++) {
-        int id = slave->remote_id;
-        I1List data = {.item = &id, .length = 1};
-        acp_requestSendUnrequitedI1List(ACP_CMD_PROG_ENABLE, &data, slave->peer);
-        int enabled = 0;
-        if (acp_sendCmdGetInt(slave->peer, ACP_CMD_PROG_GET_ENABLED, &enabled)) {
-            if (enabled) {
+int slaveSetStateM(Slave *item, int state) {
+    int id = item->remote_id;
+    I1List data = {.item = &id, .length = 1};
+    if (!lockPeer(item->peer)) {
+        return 0;
+    }
+    switch (state) {
+        case ENABLED:
+            if (!acp_requestSendUnrequitedI1List(ACP_CMD_PROG_ENABLE, &data, item->peer)) {
+                unlockPeer(item->peer);
+                return 0;
+            }
+            break;
+        case DISABLED:
+            if (!acp_requestSendUnrequitedI1List(ACP_CMD_PROG_DISABLE, &data, item->peer)) {
+                unlockPeer(item->peer);
+                return 0;
+            }
+            break;
+    }
+    unlockPeer(item->peer);
+    return 1;
+}
+
+int slaveCheckState(Slave *item, int state) {
+    ACPRequest request;
+    I1List data = {.item = &item->remote_id, .length = 1};
+    if (!lockPeer(item->peer)) {
+        return 0;
+    }
+    if (!acp_requestSendI1List(ACP_CMD_PROG_GET_ENABLED, &data, &request, item->peer)) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckState(): acp_requestSendI1List failed where peer.id = %s and remote_id=%d\n", item->peer->id, item->remote_id);
+#endif
+        unlockPeer(item->peer);
+        return 0;
+    }
+    I2 td1;
+    I2List tl1 = {&td1, 0};
+    if (!acp_responseReadI2List(&tl1, 1, &request, item->peer)) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckState(): acp_responseReadI2List() error where peer.id = %s and remote_id=%d\n", item->peer->id, item->remote_id);
+#endif
+        unlockPeer(item->peer);
+        return 0;
+    }
+    unlockPeer(item->peer);
+    if (tl1.item[0].p0 != item->remote_id) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckState(): response: peer returned id=%d but requested one was %d\n", tl1.item[0].p0, item->remote_id);
+#endif
+        return 0;
+    }
+    if (tl1.length != 1) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckState(): response: number of items = %d but 1 expected\n", tl1.length);
+#endif
+        return 0;
+    }
+    switch (state) {
+        case ENABLED:
+            if (tl1.item[0].p1 == 1) {
                 return 1;
             }
-        }
+            break;
+        case DISABLED:
+            if (tl1.item[0].p1 == 0) {
+                return 1;
+            }
+            break;
+    }
+
+    return 0;
+}
+
+int slaveSetGoalM(Slave *item, float goal) {
+    I1F1 i1f1 = {.p0 = item->remote_id, .p1 = goal};
+    I1F1List data = {.item = &i1f1, .length = 1};
+    if (!lockPeer(item->peer)) {
+        return 0;
+    }
+    if (!acp_requestSendUnrequitedI1F1List(ACP_CMD_REG_PROG_SET_GOAL, &data, item->peer)) {
+        unlockPeer(item->peer);
+        return 0;
+    }
+    unlockPeer(item->peer);
+    return 1;
+}
+
+int slaveCheckGoal(Slave *item, float goal) {
+    ACPRequest request;
+    I1List data = {.item = &item->remote_id, .length = 1};
+    if (!lockPeer(item->peer)) {
+        return 0;
+    }
+    if (!acp_requestSendI1List(ACP_CMD_REG_PROG_GET_GOAL, &data, &request, item->peer)) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckGoal(): acp_requestSendI1List failed where peer.id = %s and remote_id=%d\n", item->peer->id, item->remote_id);
+#endif
+        unlockPeer(item->peer);
+        return 0;
+    }
+    I1F1 td1;
+    I1F1List tl1 = {&td1, 0};
+    if (!acp_responseReadI1F1List(&tl1, 1, &request, item->peer)) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckGoal(): acp_responseReadI1F1List() error where peer.id = %s and remote_id=%d\n", item->peer->id, item->remote_id);
+#endif
+        unlockPeer(item->peer);
+        return 0;
+    }
+    unlockPeer(item->peer);
+    if (tl1.item[0].p0 != item->remote_id) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckGoal(): response: peer returned id=%d but requested one was %d\n", tl1.item[0].p0, item->remote_id);
+#endif
+        return 0;
+    }
+    if (tl1.length != 1) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "slaveCheckGoal(): response: number of items = %d but 1 expected\n", tl1.length);
+#endif
+        return 0;
+    }
+    if (aeq(tl1.item[0].p1, goal, PRECISION)) {
+        return 1;
     }
     return 0;
 }
 
-int slaveDisable(Slave *slave) {
-    extern unsigned int retry_count;
-    for (int i = 0; i < retry_count; i++) {
-        int id = slave->remote_id;
-        I1List data = {.item = &id, .length = 1};
-        acp_requestSendUnrequitedI1List(ACP_CMD_PROG_DISABLE, &data, slave->peer);
-        int enabled = 1;
-        if (acp_sendCmdGetInt(slave->peer, ACP_CMD_PROG_GET_ENABLED, &enabled)) {
-            if (!enabled) {
-                return 1;
+int slaveGetValue(Slave *item, float *value) {
+    FTS fts;
+    switch (item->state) {
+        case INIT:
+            item->state = DO;
+            item->crepeat = 0;
+        case DO:
+            if (item->crepeat < item->retry_count) {
+                if (acp_getFTS(&fts, item->peer, item->remote_id)) {
+#ifdef MODE_DEBUG
+                    printf(" value:%.3f", fts.value);
+#endif
+                    *value = fts.value;
+                    item->state = INIT;
+                    return DONE;
+                } else {
+                    item->crepeat++;
+                    return WAIT;
+                }
             }
-        }
+            break;
     }
-    return 0;
+
+#ifdef MODE_DEBUG
+    fprintf(stderr, "slaveGetValue(): failed to get value where slave.remote_id = %d\n", item->remote_id);
+#endif
+    item->state = INIT;
+    return FAILURE;
 }
 
-int slaveSetGoal(Slave *slave, float goal) {
-    extern unsigned int retry_count;
-    for (int i = 0; i < retry_count; i++) {
-        I1F1 i1f1 = {.p0 = slave->remote_id, .p1 = goal};
-        I1F1List data = {.item = &i1f1, .length = 1};
-        acp_requestSendUnrequitedI1F1List(ACP_CMD_REG_PROG_SET_GOAL, &data, slave->peer);
-        float f_goal = 0;
-        if (acp_sendCmdGetFloat(slave->peer, ACP_CMD_REG_PROG_GET_GOAL, &f_goal)) {
-            if (goal == f_goal) {
-                return 1;
+int slaveSetState(Slave *item, int state) {
+    switch (item->state) {
+        case INIT:
+            item->state = DO;
+            item->crepeat = 0;
+        case DO:
+            if (item->check && item->crepeat >= item->retry_count) {
+                item->state = INIT;
+                return FAILURE;
             }
+            if (slaveSetStateM(item, state)) {
+                if (item->check) {
+                    item->state = CHECK;
+                    return WAIT;
+                } else {
+                    item->state = INIT;
+                    return DONE;
+                }
+            } else {
+                item->crepeat++;
+            }
+            break;
+        case CHECK:
+        {
+            if (slaveCheckState(item, state)) {
+                item->state = INIT;
+                return DONE;
+            } else {
+                item->crepeat++;
+                item->state = DO;
+            }
+            break;
         }
+
     }
-    return 0;
+    return FAILURE;
 }
 
-int slaveGetValue(Slave *slave, float *value) {
-    extern unsigned int retry_count;
-    for (int i = 0; i < retry_count; i++) {
-        FTS fts;
-        if (acp_getFTS(&fts, slave->peer, slave->remote_id)) {
-            *value = fts.value;
-            return 1;
+int slaveSetGoal(Slave *item, float goal) {
+    switch (item->state) {
+        case INIT:
+            item->state = DO;
+            item->crepeat = 0;
+        case DO:
+            if (item->check && item->crepeat >= item->retry_count) {
+                item->state = INIT;
+                return FAILURE;
+            }
+            if (slaveSetGoalM(item, goal)) {
+                if (item->check) {
+                    item->state = CHECK;
+                    return WAIT;
+                } else {
+#ifdef MODE_DEBUG
+                    printf(" set goal:%.3f", goal);
+#endif
+                    item->state = INIT;
+                    return DONE;
+                }
+            } else {
+                item->crepeat++;
+            }
+            break;
+        case CHECK:
+        {
+            if (slaveCheckGoal(item, goal)) {
+                item->state = INIT;
+                return DONE;
+            } else {
+                item->crepeat++;
+                item->state = DO;
+            }
+            break;
         }
+
     }
-    return 0;
+    return FAILURE;
 }
 
 void progEnable(Prog *item) {
     if (!getProgEnabled(item)) {
+
         item->state = INIT;
     }
 }
 
 void progDisable(Prog *item) {
     if (getProgEnabled(item)) {
+
         item->state = DISABLE;
     }
 }
@@ -194,8 +375,10 @@ void progDisable(Prog *item) {
 void secure() {
     PROG_LIST_LOOP_DF
     PROG_LIST_LOOP_ST
-    curr->state = OFF;
-    slaveDisable(&curr->slave);
+    if (item->state != OFF) {
+        slaveSetStateM(&item->slave, DISABLED);
+    }
+    item->state = OFF;
     PROG_LIST_LOOP_SP
 }
 
@@ -222,6 +405,7 @@ int bufCatProgRuntime(const Prog *item, ACPResponse *response) {
             item->c_repeat.c_step.wait_above,
             tm_rest.tv_sec
             );
+
     return acp_responseStrCat(response, q);
 }
 
@@ -229,11 +413,13 @@ int bufCatProgInit(const Prog *item, ACPResponse *response) {
     char q[LINE_SIZE];
     char *step_goal_change_mode = getStateStr(item->c_repeat.c_step.goal_change_mode);
     char *step_stop_kind = getStateStr(item->c_repeat.c_step.stop_kind);
-    snprintf(q, sizeof q, "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%s" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR FLOAT_NUM ACP_DELIMITER_COLUMN_STR "%ld" ACP_DELIMITER_COLUMN_STR "%s" ACP_DELIMITER_COLUMN_STR "%s" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_ROW_STR,
+    snprintf(q, sizeof q, "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%s" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_COLUMN_STR FLOAT_NUM ACP_DELIMITER_COLUMN_STR "%ld" ACP_DELIMITER_COLUMN_STR "%s" ACP_DELIMITER_COLUMN_STR "%s" ACP_DELIMITER_COLUMN_STR "%d" ACP_DELIMITER_ROW_STR,
             item->id,
             item->first_repeat_id,
             item->slave.peer->id,
             item->slave.remote_id,
+            item->slave.check,
+            item->slave.retry_count,
             item->c_repeat.first_step_id,
             item->c_repeat.count,
             item->c_repeat.next_repeat_id,
@@ -244,6 +430,7 @@ int bufCatProgInit(const Prog *item, ACPResponse *response) {
             item->c_repeat.c_step.next_step_id
 
             );
+
     return acp_responseStrCat(response, q);
 }
 
@@ -254,21 +441,18 @@ int bufCatProgEnabled(const Prog *item, ACPResponse *response) {
             item->id,
             enabled
             );
+
     return acp_responseStrCat(response, q);
 }
 
 void printData(ACPResponse *response) {
     ProgList *list = &prog_list;
-    PeerList *pl = &peer_list;
     char q[LINE_SIZE];
-    size_t i;
     snprintf(q, sizeof q, "CONFIG_FILE: %s\n", CONFIG_FILE);
     SEND_STR(q)
     snprintf(q, sizeof q, "port: %d\n", sock_port);
     SEND_STR(q)
     snprintf(q, sizeof q, "pid_path: %s\n", pid_path);
-    SEND_STR(q)
-    snprintf(q, sizeof q, "retry_count: %d\n", retry_count);
     SEND_STR(q)
     snprintf(q, sizeof q, "cycle_duration sec: %ld\n", cycle_duration.tv_sec);
     SEND_STR(q)
@@ -285,39 +469,41 @@ void printData(ACPResponse *response) {
     snprintf(q, sizeof q, "prog_list length: %d\n", list->length);
     SEND_STR(q)
     SEND_STR("initial data:\n")
-    SEND_STR("+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n")
-    SEND_STR("|                                                                                    Program                                                                            |\n")
-    SEND_STR("+                                               +-----------------------------------------------------------------------------------------------------------------------+\n")
-    SEND_STR("|                                               |                                                     Repeat                                                            |\n")
-    SEND_STR("+                                               |                                               +-----------------------------------------------------------------------+\n")
-    SEND_STR("|                                               |                                               |                               Step                                    |\n")
-    SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
-    SEND_STR("|    id     |fst_rep_id |  peer_id  | remote_id |    id     |fst_stp_id |   count   |next_rep_id|     id    |   goal    | duration  |change_mode| stop_kind |next_stp_id|\n")
-    SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
+    SEND_STR("+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n")
+    SEND_STR("|                                                                                            Program                                                                                      |\n")
+    SEND_STR("+                                                                 +-----------------------------------------------------------------------------------------------------------------------+\n")
+    SEND_STR("|                                                                 |                                                     Repeat                                                            |\n")
+    SEND_STR("+                                                                 |                                               +-----------------------------------------------------------------------+\n")
+    SEND_STR("|                                                                 |                                               |                               Step                                    |\n")
+    SEND_STR("+-----------+-----------+-----------+-----------+-----+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
+    SEND_STR("|    id     |fst_rep_id |  peer_id  | remote_id |check| retry_cnt |    id     |fst_stp_id |   count   |next_rep_id|     id    |   goal    | duration  |change_mode| stop_kind |next_stp_id|\n")
+    SEND_STR("+-----------+-----------+-----------+-----------+-----+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
     PROG_LIST_LOOP_DF
     PROG_LIST_LOOP_ST
-            char *step_goal_change_mode = getStateStr(curr->c_repeat.c_step.goal_change_mode);
-    char *step_stop_kind = getStateStr(curr->c_repeat.c_step.stop_kind);
-    snprintf(q, sizeof q, "|%11d|%11d|%11s|%11d|%11d|%11d|%11d|%11d|%11d|%11.3f|%11ld|%11s|%11s|%11d|\n",
-            curr->id,
-            curr->first_repeat_id,
-            curr->slave.peer->id,
-            curr->slave.remote_id,
-            curr->c_repeat.id,
-            curr->c_repeat.first_step_id,
-            curr->c_repeat.count,
-            curr->c_repeat.next_repeat_id,
-            curr->c_repeat.c_step.id,
-            curr->c_repeat.c_step.goal,
-            curr->c_repeat.c_step.duration.tv_sec,
+            char *step_goal_change_mode = getStateStr(item->c_repeat.c_step.goal_change_mode);
+    char *step_stop_kind = getStateStr(item->c_repeat.c_step.stop_kind);
+    snprintf(q, sizeof q, "|%11d|%11d|%11s|%11d|%5d|%11d|%11d|%11d|%11d|%11d|%11d|%11.3f|%11ld|%11s|%11s|%11d|\n",
+            item->id,
+            item->first_repeat_id,
+            item->slave.peer->id,
+            item->slave.remote_id,
+            item->slave.check,
+            item->slave.retry_count,
+            item->c_repeat.id,
+            item->c_repeat.first_step_id,
+            item->c_repeat.count,
+            item->c_repeat.next_repeat_id,
+            item->c_repeat.c_step.id,
+            item->c_repeat.c_step.goal,
+            item->c_repeat.c_step.duration.tv_sec,
             step_goal_change_mode,
             step_stop_kind,
-            curr->c_repeat.c_step.next_step_id
+            item->c_repeat.c_step.next_step_id
             );
     SEND_STR(q)
     PROG_LIST_LOOP_SP
-    SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
-    
+    SEND_STR("+-----------+-----------+-----------+-----------+-----+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
+
     SEND_STR("runtime data:\n")
     SEND_STR("+-----------------------------------------------------------------------------------------------------------------------------------------------------------+\n")
     SEND_STR("|                                                                              Program                                                                      |\n")
@@ -328,49 +514,37 @@ void printData(ACPResponse *response) {
     SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
     SEND_STR("|    id     |  state    |    id     |  state    |  c_count  |    id     |   state   | state_ch  | value_st  |goal_correc| state_sp  |wait_above |  tm_rest  |\n")
     SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
-    curr=prog_list.top;
+    PROG_LIST_LOOP_DF
     PROG_LIST_LOOP_ST
-    char *state_prog = getStateStr(curr->state);
-    char *state_repeat = getStateStr(curr->c_repeat.state);
-    char *state_step = getStateStr(curr->c_repeat.c_step.state);
-    char *state_step_ch = getStateStr(curr->c_repeat.c_step.state_ch);
-    char *state_step_sp = getStateStr(curr->c_repeat.c_step.state_sp);
-    struct timespec tm_rest = getTimeRestTmr(curr->c_repeat.c_step.duration, curr->c_repeat.c_step.tmr);
+            char *state_prog = getStateStr(item->state);
+    char *state_repeat = getStateStr(item->c_repeat.state);
+    char *state_step = getStateStr(item->c_repeat.c_step.state);
+    char *state_step_ch = getStateStr(item->c_repeat.c_step.state_ch);
+    char *state_step_sp = getStateStr(item->c_repeat.c_step.state_sp);
+    struct timespec tm_rest = getTimeRestTmr(item->c_repeat.c_step.duration, item->c_repeat.c_step.tmr);
     snprintf(q, sizeof q, "|%11d|%11s|%11d|%11s|%11d|%11d|%11s|%11s|%11.3f|%11.3f|%11s|%11d|%11ld|\n",
-            curr->id,
+            item->id,
             state_prog,
-            curr->c_repeat.id,
+            item->c_repeat.id,
             state_repeat,
-            curr->c_repeat.c_count,
-            curr->c_repeat.c_step.id,
+            item->c_repeat.c_count,
+            item->c_repeat.c_step.id,
             state_step,
             state_step_ch,
-            curr->c_repeat.c_step.value_start,
-            curr->c_repeat.c_step.goal_correction,
+            item->c_repeat.c_step.value_start,
+            item->c_repeat.c_step.goal_correction,
             state_step_sp,
-            curr->c_repeat.c_step.wait_above,
+            item->c_repeat.c_step.wait_above,
             tm_rest.tv_sec
             );
     SEND_STR(q)
     PROG_LIST_LOOP_SP
     SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
 
-    SEND_STR("+-------------------------------------------------------------------------------------+\n")
-    SEND_STR("|                                       Peer                                          |\n")
-    SEND_STR("+--------------------------------+-----------+-----------+----------------+-----------+\n")
-    SEND_STR("|               id               |   link    | sock_port |      addr      |     fd    |\n")
-    SEND_STR("+--------------------------------+-----------+-----------+----------------+-----------+\n")
-    for (i = 0; i < pl->length; i++) {
-        snprintf(q, sizeof q, "|%32s|%11p|%11u|%16u|%11d|\n",
-                pl->item[i].id,
-                (void *) &pl->item[i],
-                pl->item[i].addr.sin_port,
-                pl->item[i].addr.sin_addr.s_addr,
-                *pl->item[i].fd
-                );
-        SEND_STR(q)
-    }
-    SEND_STR_L("+--------------------------------+-----------+-----------+----------------+-----------+\n")
+    acp_sendPeerListInfo(&peer_list, response, &peer_client);
+    
+    SEND_STR_L("_")
+
 }
 
 void printHelp(ACPResponse *response) {

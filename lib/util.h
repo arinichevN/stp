@@ -12,5 +12,9 @@ extern char * bufCat(char * buf, const char * str, size_t size);
 
 extern char * estostr(char *s);
 
+extern double adifd(double v1, double v2) ;
+
+extern int aeq(double v1, double v2, double acr);
+
 #endif 
 

@@ -1,12 +1,12 @@
 delete from prog;
-INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,enable,load) VALUES 
-(1,'регулятор1_канал1','regsmp_1',1,1,1,1);
-INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,enable,load) VALUES 
-(2,'регулятор1_канал2','regsmp_1',1,2,1,1);
-INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,enable,load) VALUES 
-(3,'регулятор1_канал3','regsmp_1',1,3,1,1);
-INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,enable,load) VALUES 
-(4,'регулятор1_канал4','regsmp_1',1,4,1,1);
+INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,'check',retry_count,enable,load) VALUES 
+(1,'регулятор1_канал1','regsmp_1',1,1,1,1,1,1);
+INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,'check',retry_count,enable,load) VALUES 
+(2,'регулятор1_канал2','regsmp_1',1,2,1,1,1,1);
+INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,'check',retry_count,enable,load) VALUES 
+(3,'регулятор1_канал3','regsmp_1',1,3,1,1,1,1);
+INSERT INTO prog(id,description,peer_id,first_repeat_id,remote_id,'check',retry_count,enable,load) VALUES 
+(4,'регулятор1_канал4','regsmp_1',1,4,1,1,1,1);
 
 delete from 'repeat';
 INSERT INTO 'repeat'(id,first_step_id,count,next_repeat_id) VALUES 

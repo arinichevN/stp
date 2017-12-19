@@ -9,7 +9,6 @@ char db_public_path[LINE_SIZE];
 
 int pid_file = -1;
 int proc_id;
-unsigned int retry_count = 0;
 int sock_port = -1;
 int sock_fd = -1;
 int sock_fd_tf = -1;
@@ -37,16 +36,15 @@ int readSettings() {
     }
     skipLine(stream);
     int n;
-    n = fscanf(stream, "%d\t%255s\t%u\t%ld\t%ld\t%255s\t%255s\n",
+    n = fscanf(stream, "%d\t%255s\t%ld\t%ld\t%255s\t%255s\n",
             &sock_port,
             pid_path,
-            &retry_count,
             &cycle_duration.tv_sec,
             &cycle_duration.tv_nsec,
             db_data_path,
             db_public_path
             );
-    if (n != 7) {
+    if (n != 6) {
         fclose(stream);
 #ifdef MODE_DEBUG
         fputs("ERROR: readSettings: bad format\n", stderr);
@@ -55,7 +53,7 @@ int readSettings() {
     }
     fclose(stream);
 #ifdef MODE_DEBUG
-    printf("readSettings: \n\tsock_port: %d, \n\tpid_path: %s, \n\tretry_count: %u, \n\tcycle_duration: %ld sec %ld nsec, \n\tdb_data_path: %s, \n\tdb_public_path: %s\n", sock_port, pid_path,retry_count, cycle_duration.tv_sec, cycle_duration.tv_nsec, db_data_path, db_public_path);
+    printf("readSettings: \n\tsock_port: %d, \n\tpid_path: %s, \n\tcycle_duration: %ld sec %ld nsec, \n\tdb_data_path: %s, \n\tdb_public_path: %s\n", sock_port, pid_path, cycle_duration.tv_sec, cycle_duration.tv_nsec, db_data_path, db_public_path);
 #endif
     return 1;
 }
@@ -124,7 +122,7 @@ void serverRun(int *state, int init_state) {
         for (int i = 0; i < i1l.length; i++) {
             Prog *curr = getProgById(i1l.item[i], &prog_list);
             if (curr != NULL) {
-                 slaveDisable(&curr->slave);
+                slaveSetState(&curr->slave, DISABLED);
                 deleteProgById(i1l.item[i], &prog_list, db_data_path);
             }
         }
@@ -140,7 +138,7 @@ void serverRun(int *state, int init_state) {
         for (int i = 0; i < i1l.length; i++) {
             Prog *curr = getProgById(i1l.item[i], &prog_list);
             if (curr != NULL) {
-                 slaveDisable(&curr->slave);
+                slaveSetState(&curr->slave, DISABLED);
                 deleteProgById(i1l.item[i], &prog_list, db_data_path);
             }
         }
@@ -214,15 +212,30 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
     char *state = getStateStr(item->state);
     char *state_ch = getStateStr(item->state);
     char *state_sp = getStateStr(item->state);
+    char *ch_mode = getStateStr(item->goal_change_mode);
+    char *st_kind = getStateStr(item->stop_kind);
     struct timespec tm_rest = getTimeRestTmr(item->duration, item->tmr);
-    printf("\t\tstep: id: %d state: %s state_ch: %s value_start: %f goal_corr: %f state_sp: %s wait_above: %d tm_rest: %ld \n", item->id, state, state_ch,item->value_start, item->goal_correction, state_sp, item->wait_above, tm_rest.tv_sec);
+    printf("--step_ini: id: %d goal:%.3f duration:%ld change_mode:%s stop_kind:%s\n", item->id, item->goal, item->duration.tv_sec, ch_mode, st_kind);
+    printf("--step_run: state: %s state_ch:%s value_start:%.3f goal_corr:%.3f state_sp:%s wait_above:%d tm_rest:%ld", state, state_ch, item->value_start, item->goal_correction, state_sp, item->wait_above, tm_rest.tv_sec);
+
 #endif
     switch (item->state) {
         case INIT:
-            item->tmr.ready = 0;
+            ton_ts_reset(&item->tmr);
             item->state_ch = INIT;
             item->state_sp = INIT;
-            item->state = RUN;
+            if (item->goal_change_mode == CHANGE_MODE_INSTANT) {
+                switch (slaveSetGoal(slave, item->goal)) {
+                    case DONE:
+                        item->state = RUN;
+                        break;
+                    case WAIT:
+                        break;
+                    case FAILURE:
+                        item->state = FAILURE;
+                        break;
+                }
+            }
             break;
         case RUN:
 
@@ -231,18 +244,23 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
                 case INIT:
                     if (item->goal_change_mode == CHANGE_MODE_EVEN && item->stop_kind == STOP_KIND_TIME) {
                         float value;
-                        if (slaveGetValue(slave, &value)) {
-                            item->goal_correction = 0;
-                            item->value_start = value;
-                            if (item->duration.tv_sec > 0) {
-                                item->goal_correction = (item->goal - value) / item->duration.tv_sec;
-                            }
-                            if (item->duration.tv_nsec > 0) {
-                                item->goal_correction += (item->goal - value) / item->duration.tv_nsec * NANO_FACTOR;
-                            }
-                            item->state_ch = RUN;
-                        } else {
-                            item->state_ch = FAILURE;
+                        switch (slaveGetValue(slave, &value)) {
+                            case DONE:
+                                item->goal_correction = 0;
+                                item->value_start = value;
+                                if (item->duration.tv_sec > 0) {
+                                    item->goal_correction = (item->goal - value) / item->duration.tv_sec;
+                                }
+                                if (item->duration.tv_nsec > 0) {
+                                    item->goal_correction += (item->goal - value) / item->duration.tv_nsec * NANO_FACTOR;
+                                }
+                                item->state_ch = RUN;
+                                break;
+                            case WAIT:
+                                break;
+                            case FAILURE:
+                                item->state_ch = FAILURE;
+                                break;
                         }
                     } else {
                         item->state_ch = OFF;
@@ -252,8 +270,14 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
                 {
                     struct timespec dif = getTimePassed_ts(item->tmr.start);
                     float goal = item->value_start + dif.tv_sec * item->goal_correction + dif.tv_nsec * item->goal_correction * NANO_FACTOR;
-                    if (!slaveSetGoal(slave, goal)) {
-                        item->state_ch = FAILURE;
+                    switch (slaveSetGoal(slave, goal)) {
+                        case DONE:
+                            break;
+                        case WAIT:
+                            break;
+                        case FAILURE:
+                            item->state_ch = FAILURE;
+                            break;
                     }
                     break;
                 }
@@ -270,14 +294,20 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
             switch (item->state_sp) {
                 case INIT:
                     if (item->stop_kind == STOP_KIND_TIME) {
+                        ton_ts_reset(&item->tmr);
                         item->state_sp = BYTIME;
                     } else if (item->stop_kind == STOP_KIND_GOAL) {
                         float value;
-                        if (slaveGetValue(slave, &value)) {
-                            item->wait_above = (item->goal > value);
-                            item->state_sp = BYGOAL;
-                        } else {
-                            item->state_sp = FAILURE;
+                        switch (slaveGetValue(slave, &value)) {
+                            case DONE:
+                                item->wait_above = (item->goal > value);
+                                item->state_sp = BYGOAL;
+                                break;
+                            case WAIT:
+                                break;
+                            case FAILURE:
+                                item->state_sp = FAILURE;
+                                break;
                         }
                     }
                     break;
@@ -289,22 +319,29 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
                 case BYGOAL:
                 {
                     float value;
-                    if (slaveGetValue(slave, &value)) {
-                        int f = 0;
-                        if (item->wait_above) {
-                            if (item->goal <= value) {
-                                f = 1;
+                    switch (slaveGetValue(slave, &value)) {
+                        case DONE:
+                        {
+                            int f = 0;
+                            if (item->wait_above) {
+                                if (item->goal <= value) {
+                                    f = 1;
+                                }
+                            } else {
+                                if (item->goal >= value) {
+                                    f = 1;
+                                }
                             }
-                        } else {
-                            if (item->goal >= value) {
-                                f = 1;
+                            if (f) {
+                                item->state = NSTEP;
                             }
+                            break;
                         }
-                        if (f) {
-                            item->state = NSTEP;
-                        }
-                    } else {
-                        item->state_sp = FAILURE;
+                        case WAIT:
+                            break;
+                        case FAILURE:
+                            item->state_sp = FAILURE;
+                            break;
                     }
                     break;
                 }
@@ -340,12 +377,16 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
             item->state = FAILURE;
             break;
     }
+#ifdef MODE_DEBUG
+    putchar('\n');
+#endif
     return item->state;
 }
+
 int repeatControl(Repeat *item, Slave *slave, const char * db_path) {
 #ifdef MODE_DEBUG
     char *state = getStateStr(item->state);
-    printf("\trepeat: id: %d state: %s c_count: %d \n", item->id, state, item->c_count);
+    printf("-repeat: id:%d state:%s count:%d c_count:%d \n", item->id, state, item->count, item->c_count);
 #endif
     switch (item->state) {
         case INIT:
@@ -403,12 +444,14 @@ int repeatControl(Repeat *item, Slave *slave, const char * db_path) {
 void progControl(Prog *item, const char * db_path) {
 #ifdef MODE_DEBUG
     char *state = getStateStr(item->state);
-    printf("prog: id: %d state: %s \n", item->id, state);
+    printf("prog: id:%d state:%s \n", item->id, state);
 #endif
     switch (item->state) {
         case INIT:
+            item->slave.crepeat = 0;
+            item->slave.state = INIT;
             if (getRepeatByIdFdb(&item->c_repeat, item->first_repeat_id, db_path)) {
-                if (slaveEnable(&item->slave)) {
+                if (slaveSetState(&item->slave, ENABLED)) {
                     item->state = RUN;
                     break;
                 }
@@ -435,8 +478,18 @@ void progControl(Prog *item, const char * db_path) {
             }
             break;
         case DISABLE:
-            slaveDisable(&item->slave);
-            item->state = OFF;
+            switch (slaveSetState(&item->slave, DISABLED)) {
+                case WAIT:
+                    break;
+                case DONE:
+                    item->state = OFF;
+                    break;
+                case FAILURE:
+                    item->state = FAILURE;
+                    break;
+                default:
+                    break;
+            }
             break;
         case FAILURE:
             break;
@@ -446,9 +499,6 @@ void progControl(Prog *item, const char * db_path) {
             item->state = OFF;
             break;
     }
-#ifdef MODE_DEBUG
-    putchar('\n');
-#endif
 }
 
 void *threadFunction(void *arg) {

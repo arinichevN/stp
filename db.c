@@ -2,12 +2,16 @@
 
 int checkProg(const Prog *item, const ProgList *list) {
     if (item->slave.peer == NULL) {
-        fprintf(stderr, "checkProg: no peer attached to prog with id = %d\n", item->id);
+        fprintf(stderr, "checkProg(): no peer attached to prog with id = %d\n", item->id);
+        return 0;
+    }
+    if (item->slave.retry_count < 0) {
+        fprintf(stderr, "checkProg(): bad retry_count where id = %d\n", item->id);
         return 0;
     }
     //unique id
     if (getProgById(item->id, list) != NULL) {
-        fprintf(stderr, "checkProg: prog with id = %d is already running\n", item->id);
+        fprintf(stderr, "checkProg(): prog with id = %d is already running\n", item->id);
         return 0;
     }
     return 1;
@@ -15,15 +19,19 @@ int checkProg(const Prog *item, const ProgList *list) {
 
 int checkStep(const Step *item) {
     if (item->duration.tv_sec < 0 || item->duration.tv_nsec < 0) {
-        fprintf(stderr, "checkStep: bad duration where id = %d\n", item->id);
+        fprintf(stderr, "checkStep(): bad duration where id = %d\n", item->id);
         return 0;
     }
     if (item->goal_change_mode == UNKNOWN) {
-        fprintf(stderr, "checkStep: bad goal_change_mode where id = %d\n", item->id);
+        fprintf(stderr, "checkStep(): bad goal_change_mode where id = %d\n", item->id);
         return 0;
     }
     if (item->stop_kind == UNKNOWN) {
-        fprintf(stderr, "checkStep: bad stop_kind where id = %d\n", item->id);
+        fprintf(stderr, "checkStep(): bad stop_kind where id = %d\n", item->id);
+        return 0;
+    }
+    if (item->goal_change_mode == CHANGE_MODE_EVEN && item->stop_kind == STOP_KIND_GOAL) {
+        fprintf(stderr, "checkStep(): even change mode and stop by goal are incompatible where id = %d\n", item->id);
         return 0;
     }
     return 1;
@@ -31,7 +39,7 @@ int checkStep(const Step *item) {
 
 int checkRepeat(const Repeat *item) {
     if (item->count < 0) {
-        fprintf(stderr, "checkRepeat: bad count where id = %d\n", item->id);
+        fprintf(stderr, "checkRepeat(): bad count where id = %d\n", item->id);
         return 0;
     }
     return 1;
@@ -141,22 +149,29 @@ int loadProg_callback(void *d, int argc, char **argv, char **azColName) {
         } else if (strcmp("first_repeat_id", azColName[i]) == 0) {
             item->first_repeat_id = atoi(argv[i]);
         } else if (strcmp("peer_id", azColName[i]) == 0) {
-            item->slave.peer=getPeerById(argv[i],data->peer_list);          
+            item->slave.peer = getPeerById(argv[i], data->peer_list);
         } else if (strcmp("remote_id", azColName[i]) == 0) {
             item->slave.remote_id = atoi(argv[i]);
+        } else if (strcmp("check", azColName[i]) == 0) {
+            item->slave.check = atoi(argv[i]);
+        } else if (strcmp("retry_count", azColName[i]) == 0) {
+            item->slave.retry_count = atoi(argv[i]);
         } else if (strcmp("enable", azColName[i]) == 0) {
             enable = atoi(argv[i]);
         } else if (strcmp("load", azColName[i]) == 0) {
             load = atoi(argv[i]);
         } else {
-            putse("loadProg_callback: unknown column: %s\n");
+#ifdef MODE_DEBUG
+            fprintf(stderr,"loadProg_callback: unknown column: %s\n", azColName[i]);
+#endif
+            return EXIT_FAILURE;
         }
     }
 
     if (enable) {
         item->state = INIT;
     } else {
-       item->state = DISABLE;
+        item->state = DISABLE;
     }
 
     item->next = NULL;
@@ -188,7 +203,7 @@ int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
         } else if (strcmp("first_step_id", azColName[i]) == 0) {
             item->first_step_id = atof(argv[i]);
         } else if (strcmp("count", azColName[i]) == 0) {
-            item->count = atof(argv[i]);
+            item->count = atoi(argv[i]);
         } else if (strcmp("next_repeat_id", azColName[i]) == 0) {
             item->next_repeat_id = atoi(argv[i]);
         } else {
@@ -360,7 +375,6 @@ int reloadProgById(int id, ProgList *list, PeerList *pl, const char* db_path) {
     }
     return addProgById(id, list, pl, db_path);
 }
-
 
 int getStepByIdFdb(Step *item, int id, const char *db_path) {
     sqlite3 *db;

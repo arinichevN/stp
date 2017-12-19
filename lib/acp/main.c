@@ -33,6 +33,8 @@ FUN_LIST_INIT(F1)
 
 FUN_LIST_INIT(I1F1)
 
+FUN_LIST_INIT(D1)
+
 FUN_LIST_INIT(S1)
 
 FUN_LIST_INIT(I1S1)
@@ -134,20 +136,26 @@ static void acp_requestSetNewId(ACPRequest * item) {
     item->id = (unsigned int) rand();
 }
 
+static inline int acp_readAll(Peer *peer){
+    readAll(*(peer->fd));
+}
+
 static int acp_read(char *buf, size_t buf_size, Peer *peer) {
     ssize_t n = recvfrom(*peer->fd, buf, buf_size, 0, (struct sockaddr*) (&(peer->addr)), &(peer->addr_size));
     if (n < 0) {
 #ifdef MODE_DEBUG
-        perror("acp_read");
+        perror("acp_read()");
 #endif
         return 0;
     }
+    acp_readAll(peer);
 #ifdef MODE_DEBUG
     puts("acp_read() dump:");
     acp_dumpBuf(buf, buf_size);
 #endif
     return acp_crcCheck(buf, buf_size);
 }
+
 
 static int acp_responseParse(ACPResponse *item) {
     if (strlen(item->buf) < ACP_RESPONSE_BUF_SIZE_MIN) {
@@ -342,7 +350,7 @@ static void acp_bufToData(char **v) {
 static int acp_sendBuf(const char *buf, size_t buf_size, Peer *peer) {
     size_t sz = acp_packlen(buf, buf_size);
 #ifdef MODE_DEBUG
-    fprintf(stdout, "acp_sendBuf(): we will send: %u bytes\n", sz);
+    fprintf(stdout, "acp_sendBuf(): we will send: %u bytes to %s at %s %d\n", sz, peer->id, peer->addr_str, peer->port);
 #endif
     return sendBuf((void *) buf, sz, *(peer->fd), (struct sockaddr *) (&peer->addr), peer->addr_size);
 }
@@ -821,31 +829,10 @@ void acp_responseSendStr(const char *s, int is_not_last, ACPResponse *response, 
         response->last_is_ok = 0;
     }
 }
-
-int acp_responseReadFTSList(FTSList *list, size_t list_max_size, ACPRequest *request, Peer *peer) {
-    ACP_RESPONSE_CREATE
-    if (!acp_responseRead(&response, peer)) {
-        return 0;
-    }
-    if (!acp_responseCheck(&response, request)) {
-        return 0;
-    }
-    acp_dataToFTSList(response.data, list, list_max_size);
-    return 1;
-}
-
-int acp_responseReadI2List(I2List *list, size_t list_max_size, ACPRequest *request, Peer *peer) {
-    ACP_RESPONSE_CREATE
-    if (!acp_responseRead(&response, peer)) {
-        return 0;
-    }
-    if (!acp_responseCheck(&response, request)) {
-        return 0;
-    }
-    acp_dataToI2List(response.data, list, list_max_size);
-    return 1;
-}
-
+FUN_ACP_RESPONSE_READ(I1List)
+FUN_ACP_RESPONSE_READ(I2List)
+FUN_ACP_RESPONSE_READ(I1F1List)
+FUN_ACP_RESPONSE_READ(FTSList)
 int acp_setEMOutput(EM *em, int output) {
     if (lockEM(em)) {
         if (lockPeer(em->source)) {
@@ -1075,7 +1062,6 @@ int acp_readSensorFTS(SensorFTS *s) {
 #ifdef MODE_DEBUG
                 fprintf(stderr, "acp_readSensorFTS(): response: peer returned id=%d but requested one was %d\n", tl.item[0].id, s->remote_id);
 #endif
-                readAll(*(s->source->fd));
                 unlockPeer(s->source);
                 unlockSensorFTS(s);
                 return 0;
@@ -1145,7 +1131,6 @@ int acp_getFTS(FTS *output, Peer *peer, int remote_id) {
 #ifdef MODE_DEBUG
             fprintf(stderr, "acp_getFTS(): response: peer returned id=%d but requested one was %d\n", tl.item[0].id, remote_id);
 #endif
-            readAll(*(peer->fd));
             unlockPeer(peer);
             return 0;
         }
@@ -1174,23 +1159,24 @@ int acp_getFTS(FTS *output, Peer *peer, int remote_id) {
 
 void acp_pingPeer(Peer *item) {
     if (lockPeer(item)) {
-        readAll(*(item->fd));
         item->active = 0;
+        item->time1 = getCurrentTime();
         ACPRequest request;
         if (!acp_requestSendCmd(ACP_CMD_APP_PING, &request, item)) {
 #ifdef MODE_DEBUG
             fputs("acp_pingPeer(): acp_requestSendCmd failed\n", stderr);
 #endif
-            item->time1 = getCurrentTime();
             unlockPeer(item);
             return;
         }
         //waiting for response...
         ACP_RESPONSE_CREATE
         if (!acp_responseRead(&response, item)) {
+            unlockPeer(item);
             return;
         }
         if (!acp_responseCheck(&response, &request)) {
+            unlockPeer(item);
             return;
         }
         char *b = response.data;
@@ -1200,12 +1186,10 @@ void acp_pingPeer(Peer *item) {
 #ifdef MODE_DEBUG
             fputs("acp_pingPeer(): peer is not busy\n", stderr);
 #endif
-            item->time1 = getCurrentTime();
             unlockPeer(item);
             return;
         }
         item->active = 1;
-        item->time1 = getCurrentTime();
         unlockPeer(item);
     }
 }
@@ -1245,29 +1229,27 @@ int acp_responseSendCurTime(ACPResponse *item, Peer *peer) {
 int acp_sendCmdGetInt(Peer *peer, char* cmd, int *output) {
     if (lockPeer(peer)) {
         peer->active = 0;
+        peer->time1 = getCurrentTime();
         ACPRequest request;
         if (!acp_requestSendCmd(cmd, &request, peer)) {
 #ifdef MODE_DEBUG
             fputs("acp_sendCmdGetInt(): acp_requestSendCmd failed\n", stderr);
 #endif
-            peer->time1 = getCurrentTime();
             unlockPeer(peer);
             return 0;
         }
         //waiting for response...
         ACP_RESPONSE_CREATE
         if (!acp_responseRead(&response, peer)) {
-            peer->time1 = getCurrentTime();
             unlockPeer(peer);
             return 0;
         }
+        peer->active = 1;
         unlockPeer(peer);
-
         if (!acp_responseCheck(&response, &request)) {
             return 0;
         }
-        peer->active = 1;
-        peer->time1 = getCurrentTime();
+
         if (!acp_dataToI(response.data, output)) {
 #ifdef MODE_DEBUG
             fputs("acp_sendCmdGetInt(): acp_dataToI() failed\n", stderr);
@@ -1285,19 +1267,18 @@ int acp_sendCmdGetInt(Peer *peer, char* cmd, int *output) {
 int acp_sendCmdGetFloat(Peer *peer, char* cmd, float *output) {
     if (lockPeer(peer)) {
         peer->active = 0;
+        peer->time1 = getCurrentTime();
         ACPRequest request;
         if (!acp_requestSendCmd(cmd, &request, peer)) {
 #ifdef MODE_DEBUG
             fputs("acp_sendCmdGetFloat(): acp_requestSendCmd failed\n", stderr);
 #endif
-            peer->time1 = getCurrentTime();
             unlockPeer(peer);
             return 0;
         }
         //waiting for response...
         ACP_RESPONSE_CREATE
         if (!acp_responseRead(&response, peer)) {
-            peer->time1 = getCurrentTime();
             unlockPeer(peer);
             return 0;
         }
@@ -1307,7 +1288,6 @@ int acp_sendCmdGetFloat(Peer *peer, char* cmd, float *output) {
             return 0;
         }
         peer->active = 1;
-        peer->time1 = getCurrentTime();
         if (!acp_dataToF(response.data, output)) {
 #ifdef MODE_DEBUG
             fputs("acp_sendCmdGetFloat(): acp_dataToI() failed\n", stderr);
@@ -1402,6 +1382,26 @@ void acp_printI3(I3List *list) {
     puts("+-----------+-----------+-----------+");
 }
 
+void acp_sendPeerListInfo(PeerList *pl, ACPResponse *response, Peer *peer) {
+    char q[LINE_SIZE];
+    ACP_SEND_STR("+--------------------------------------------------------------------------------+\n")
+    ACP_SEND_STR("|                                       Peer                                     |\n")
+    ACP_SEND_STR("+-----------+---------------+-----------+-----------+----------------+-----------+\n")
+    ACP_SEND_STR("|    id     |    address    |   port    | sin_port  |     s_addr     |     fd    |\n")
+    ACP_SEND_STR("+-----------+---------------+-----------+-----------+----------------+-----------+\n")
+    for (int i = 0; i < pl->length; i++) {
+        snprintf(q, sizeof q, "|%11s|%15s|%11d|%11u|%16u|%11d|\n",
+                pl->item[i].id,
+                pl->item[i].addr_str,
+                pl->item[i].port,
+                pl->item[i].addr.sin_port,
+                pl->item[i].addr.sin_addr.s_addr,
+                *pl->item[i].fd
+                );
+        ACP_SEND_STR(q)
+    }
+    ACP_SEND_STR("+-----------+---------------+-----------+-----------+----------------+-----------+\n")
+}
 
 
 
