@@ -47,12 +47,18 @@
 #define PROG_LIST_LOOP_SP item = item->next; } item = prog_list.top;}
 
 typedef struct {
+    int state;
+    int retry_count;
+    int crepeat;
+} Repeater;
+
+typedef struct {
     Peer *peer;
     int remote_id;
     int check;
-    int retry_count;
-    int state;
-    int crepeat;
+    Repeater r1;
+    Repeater r2;
+     Repeater r3;
 } Slave;
 
 typedef struct {
@@ -127,7 +133,10 @@ enum {
     STOP_KIND_GOAL,
     UNKNOWN,
     FAILURE,
-    ENABLED,DISABLED
+    ENABLED,DISABLED,
+    SLAVE_ENABLE,
+    SET_GOAL,
+    GET_VALUE
 } States;
 
 

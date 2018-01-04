@@ -54,10 +54,10 @@ function build_lib {
 	gcc $1  -c dbl.c -DSQLITE_THREADSAFE=2 -DSQLITE_OMIT_LOAD_EXTENSION $DEBUG_PARAM -lsqlite3 && \
 	gcc $1  -c configl.c -DSQLITE_THREADSAFE=2 -DSQLITE_OMIT_LOAD_EXTENSION $DEBUG_PARAM -lsqlite3 && \
 	gcc $1  -c timef.c $DEBUG_PARAM && \
-	gcc $1  -c udp.c $DEBUG_PARAM && \
+	gcc   -c udp.c $DEBUG_PARAM && \
 	gcc $1  -c util.c $DEBUG_PARAM && \
 	cd acp && \
-	gcc $1  -c main.c $DEBUG_PARAM && \
+	gcc   -c main.c $DEBUG_PARAM && \
 	cd ../ && \
 	echo "library: making archive..." && \
 	rm -f libpac.a

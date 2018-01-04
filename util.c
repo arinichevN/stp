@@ -108,13 +108,12 @@ char * getStateStr(char state) {
             return STOP_KIND_TIME_STR;
         case STOP_KIND_GOAL:
             return STOP_KIND_GOAL_STR;
-    }
-    return "?";
-}
-
-char * getStopKindStr(char state) {
-    switch (state) {
-
+        case SLAVE_ENABLE:
+            return "SLAVE_ENABLE";
+        case SET_GOAL:
+            return "SET_GOAL";
+        case GET_VALUE:
+            return "GET_VALUE";
     }
     return "?";
 }
@@ -249,23 +248,26 @@ int slaveCheckGoal(Slave *item, float goal) {
     return 0;
 }
 
-int slaveGetValue(Slave *item, float *value) {
+int slaveGetValue(Slave *item, Repeater *r, float *value) {
     FTS fts;
-    switch (item->state) {
+    switch (r->state) {
         case INIT:
-            item->state = DO;
-            item->crepeat = 0;
+            r->state = DO;
+            r->crepeat = 0;
         case DO:
-            if (item->crepeat < item->retry_count) {
+            if (r->crepeat < r->retry_count) {
                 if (acp_getFTS(&fts, item->peer, item->remote_id)) {
 #ifdef MODE_DEBUG
                     printf(" value:%.3f", fts.value);
 #endif
                     *value = fts.value;
-                    item->state = INIT;
+                    r->state = INIT;
                     return DONE;
                 } else {
-                    item->crepeat++;
+                    r->crepeat++;
+#ifdef MODE_DEBUG
+                    printf(" get value:WAIT");
+#endif
                     return WAIT;
                 }
             }
@@ -275,40 +277,47 @@ int slaveGetValue(Slave *item, float *value) {
 #ifdef MODE_DEBUG
     fprintf(stderr, "slaveGetValue(): failed to get value where slave.remote_id = %d\n", item->remote_id);
 #endif
-    item->state = INIT;
+    r->state = INIT;
     return FAILURE;
 }
 
-int slaveSetState(Slave *item, int state) {
-    switch (item->state) {
+int slaveSetState(Slave *item,Repeater *r, int state) {
+    switch (r->state) {
         case INIT:
-            item->state = DO;
-            item->crepeat = 0;
+            r->state = DO;
+            r->crepeat = 0;
         case DO:
-            if (item->check && item->crepeat >= item->retry_count) {
-                item->state = INIT;
+            if (item->check && r->crepeat >= r->retry_count) {
+                r->state = INIT;
                 return FAILURE;
             }
             if (slaveSetStateM(item, state)) {
                 if (item->check) {
-                    item->state = CHECK;
+                    r->state = CHECK;
+#ifdef MODE_DEBUG
+                    printf(" set state:WAIT1\n");
+#endif
                     return WAIT;
                 } else {
-                    item->state = INIT;
+                    r->state = INIT;
                     return DONE;
                 }
             } else {
-                item->crepeat++;
+                r->crepeat++;
             }
             break;
         case CHECK:
         {
             if (slaveCheckState(item, state)) {
-                item->state = INIT;
+                r->state = INIT;
                 return DONE;
             } else {
-                item->crepeat++;
-                item->state = DO;
+                r->crepeat++;
+                r->state = DO;
+#ifdef MODE_DEBUG
+                printf(" set state:WAIT2\n");
+#endif
+                return WAIT;
             }
             break;
         }
@@ -317,39 +326,49 @@ int slaveSetState(Slave *item, int state) {
     return FAILURE;
 }
 
-int slaveSetGoal(Slave *item, float goal) {
-    switch (item->state) {
+int slaveSetGoal(Slave *item,Repeater *r, float goal) {
+    #ifdef MODE_DEBUG
+                    printf(" trying to set goal: %f\n", goal);
+#endif
+    switch (r->state) {
         case INIT:
-            item->state = DO;
-            item->crepeat = 0;
+            r->state = DO;
+            r->crepeat = 0;
         case DO:
-            if (item->check && item->crepeat >= item->retry_count) {
-                item->state = INIT;
+            if (item->check && r->crepeat >= r->retry_count) {
+                r->state = INIT;
                 return FAILURE;
             }
             if (slaveSetGoalM(item, goal)) {
                 if (item->check) {
-                    item->state = CHECK;
+                    r->state = CHECK;
+#ifdef MODE_DEBUG
+                    printf(" set goal:WAIT1\n");
+#endif
                     return WAIT;
                 } else {
 #ifdef MODE_DEBUG
                     printf(" set goal:%.3f", goal);
 #endif
-                    item->state = INIT;
+                    r->state = INIT;
                     return DONE;
                 }
             } else {
-                item->crepeat++;
+                r->crepeat++;
             }
             break;
         case CHECK:
         {
             if (slaveCheckGoal(item, goal)) {
-                item->state = INIT;
+                r->state = INIT;
                 return DONE;
             } else {
-                item->crepeat++;
-                item->state = DO;
+                r->crepeat++;
+                r->state = DO;
+#ifdef MODE_DEBUG
+                printf(" set goal:WAIT2");
+#endif
+                return WAIT;
             }
             break;
         }
@@ -419,7 +438,7 @@ int bufCatProgInit(const Prog *item, ACPResponse *response) {
             item->slave.peer->id,
             item->slave.remote_id,
             item->slave.check,
-            item->slave.retry_count,
+            item->slave.r1.retry_count,
             item->c_repeat.first_step_id,
             item->c_repeat.count,
             item->c_repeat.next_repeat_id,
@@ -452,8 +471,6 @@ void printData(ACPResponse *response) {
     SEND_STR(q)
     snprintf(q, sizeof q, "port: %d\n", sock_port);
     SEND_STR(q)
-    snprintf(q, sizeof q, "pid_path: %s\n", pid_path);
-    SEND_STR(q)
     snprintf(q, sizeof q, "cycle_duration sec: %ld\n", cycle_duration.tv_sec);
     SEND_STR(q)
     snprintf(q, sizeof q, "cycle_duration nsec: %ld\n", cycle_duration.tv_nsec);
@@ -464,7 +481,7 @@ void printData(ACPResponse *response) {
     SEND_STR(q)
     snprintf(q, sizeof q, "app_state: %s\n", getAppState(app_state));
     SEND_STR(q)
-    snprintf(q, sizeof q, "PID: %d\n", proc_id);
+    snprintf(q, sizeof q, "PID: %d\n", getpid());
     SEND_STR(q)
     snprintf(q, sizeof q, "prog_list length: %d\n", list->length);
     SEND_STR(q)
@@ -488,7 +505,7 @@ void printData(ACPResponse *response) {
             item->slave.peer->id,
             item->slave.remote_id,
             item->slave.check,
-            item->slave.retry_count,
+            item->slave.r1.retry_count,
             item->c_repeat.id,
             item->c_repeat.first_step_id,
             item->c_repeat.count,
@@ -542,7 +559,7 @@ void printData(ACPResponse *response) {
     SEND_STR("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n")
 
     acp_sendPeerListInfo(&peer_list, response, &peer_client);
-    
+
     SEND_STR_L("_")
 
 }

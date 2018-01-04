@@ -5,7 +5,7 @@ int checkProg(const Prog *item, const ProgList *list) {
         fprintf(stderr, "checkProg(): no peer attached to prog with id = %d\n", item->id);
         return 0;
     }
-    if (item->slave.retry_count < 0) {
+    if (item->slave.r1.retry_count < 0) {
         fprintf(stderr, "checkProg(): bad retry_count where id = %d\n", item->id);
         return 0;
     }
@@ -30,10 +30,12 @@ int checkStep(const Step *item) {
         fprintf(stderr, "checkStep(): bad stop_kind where id = %d\n", item->id);
         return 0;
     }
+/*
     if (item->goal_change_mode == CHANGE_MODE_EVEN && item->stop_kind == STOP_KIND_GOAL) {
         fprintf(stderr, "checkStep(): even change mode and stop by goal are incompatible where id = %d\n", item->id);
         return 0;
     }
+*/
     return 1;
 }
 
@@ -155,7 +157,7 @@ int loadProg_callback(void *d, int argc, char **argv, char **azColName) {
         } else if (strcmp("check", azColName[i]) == 0) {
             item->slave.check = atoi(argv[i]);
         } else if (strcmp("retry_count", azColName[i]) == 0) {
-            item->slave.retry_count = atoi(argv[i]);
+            item->slave.r1.retry_count=item->slave.r2.retry_count =item->slave.r3.retry_count = atoi(argv[i]);
         } else if (strcmp("enable", azColName[i]) == 0) {
             enable = atoi(argv[i]);
         } else if (strcmp("load", azColName[i]) == 0) {
@@ -377,13 +379,15 @@ int reloadProgById(int id, ProgList *list, PeerList *pl, const char* db_path) {
 }
 
 int getStepByIdFdb(Step *item, int id, const char *db_path) {
+    Step tmp;
+    tmp.state=UNKNOWN;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
     }
     char q[LINE_SIZE];
     snprintf(q, sizeof q, "select id,goal,duration,goal_change_mode,stop_kind,next_step_id from step where id=%d limit 1", id);
-    if (!db_exec(db, q, loadStep_callback, (void*) item)) {
+    if (!db_exec(db, q, loadStep_callback, (void*) &tmp)) {
 #ifdef MODE_DEBUG
         fprintf(stderr, "getStepByIdFdb: query failed: %s\n", q);
 #endif
@@ -391,17 +395,23 @@ int getStepByIdFdb(Step *item, int id, const char *db_path) {
         return 0;
     }
     sqlite3_close(db);
+    if(tmp.state!=INIT){
+        return 0;
+    }
+    *item=tmp;
     return 1;
 }
 
 int getRepeatByIdFdb(Repeat *item, int id, const char *db_path) {
+    Repeat tmp;
+    tmp.state=UNKNOWN;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
     }
     char q[LINE_SIZE];
     snprintf(q, sizeof q, "select id,first_step_id,count,next_repeat_id from repeat where id=%d limit 1", id);
-    if (!db_exec(db, q, loadRepeat_callback, (void*) item)) {
+    if (!db_exec(db, q, loadRepeat_callback, (void*) &tmp)) {
 #ifdef MODE_DEBUG
         fprintf(stderr, "getRepeatByIdFdb: query failed: %s\n", q);
 #endif
@@ -409,5 +419,9 @@ int getRepeatByIdFdb(Repeat *item, int id, const char *db_path) {
         return 0;
     }
     sqlite3_close(db);
+    if(tmp.state!=INIT){
+        return 0;
+    }
+    *item=tmp;
     return 1;
 }

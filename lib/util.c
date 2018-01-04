@@ -74,9 +74,10 @@ char * estostr(char *s) {
     }
     return strcpy(s, ss);
 }
+
 /*
 absolute difference
-*/
+ */
 double adifd(double v1, double v2) {
     if (v1 > v2) {
         return v1 - v2;
@@ -88,11 +89,60 @@ double adifd(double v1, double v2) {
 
 /*
 check if values are approximately equal
-*/
+ */
 int aeq(double v1, double v2, double acr) {
     double ad = adifd(v1, v2);
     if (ad > acr) {
         return 0;
     }
     return 1;
+}
+
+int get_rand_fu(void *buf, size_t nbytes) {
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd == -1) {
+        perror("get_urand(): open /dev/urandom");
+        return 0;
+    }
+    ssize_t n = read(fd, buf, nbytes);
+    if (n == -1) {
+        perror("get_urand(): read");
+        return 0;
+    }
+    close(fd);
+    return 1;
+}
+
+int get_rand(void *buf, size_t nbytes) {
+    for (int i = 0; i < nbytes; i++) {
+        srand(clock());
+        uint8_t *p = (uint8_t *) buf;
+        p[i] = (uint8_t) rand();
+    }
+    return 1;
+}
+
+int get_rand_int(int min, int max) {
+    srand(clock());
+    int x = rand();
+    int range = (max - min);
+    int div = INT_MAX / range;
+    int out = min + (x / div);
+    return out;
+}
+
+unsigned int get_randb_uint(unsigned int min, unsigned int max) {
+    srand(clock());
+    unsigned int x = rand();
+    unsigned int range = (max - min);
+    unsigned int div = INT_MAX / range;
+    unsigned int out = min + (x / div);
+    return out;
+}
+
+unsigned int get_between_uint(unsigned int val,unsigned int min, unsigned int max) {
+    unsigned int range = (max - min);
+    unsigned int div = INT_MAX / range;
+    unsigned int out = min + (val / div);
+    return out;
 }

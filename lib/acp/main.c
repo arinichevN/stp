@@ -136,10 +136,6 @@ static void acp_requestSetNewId(ACPRequest * item) {
     item->id = (unsigned int) rand();
 }
 
-static inline int acp_readAll(Peer *peer){
-    readAll(*(peer->fd));
-}
-
 static int acp_read(char *buf, size_t buf_size, Peer *peer) {
     ssize_t n = recvfrom(*peer->fd, buf, buf_size, 0, (struct sockaddr*) (&(peer->addr)), &(peer->addr_size));
     if (n < 0) {
@@ -148,9 +144,8 @@ static int acp_read(char *buf, size_t buf_size, Peer *peer) {
 #endif
         return 0;
     }
-    acp_readAll(peer);
 #ifdef MODE_DEBUG
-    puts("acp_read() dump:");
+    printf("acp_read(): count:%ld dump:\n",n);
     acp_dumpBuf(buf, buf_size);
 #endif
     return acp_crcCheck(buf, buf_size);
