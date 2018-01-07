@@ -13,8 +13,8 @@ Peer peer_client = {.fd = &sock_fd, .addr_size = sizeof peer_client.addr};
 struct timespec cycle_duration = {0, 0};
 DEF_THREAD
 Mutex progl_mutex = {.created = 0, .attr_initialized = 0};
-I1List i1l = {NULL, 0};
-PeerList peer_list = {NULL, 0};
+I1List i1l;
+PeerList peer_list;
 ProgList prog_list = {NULL, NULL, 0};
 
 #include "util.c"
@@ -104,7 +104,7 @@ int initData() {
     return 1;
 }
 
-#define PARSE_I1LIST acp_requestDataToI1List(&request, &i1l, prog_list.length);if (i1l.length <= 0) {return;}
+#define PARSE_I1LIST acp_requestDataToI1List(&request, &i1l);if (i1l.length <= 0) {return;}
 
 void serverRun(int *state, int init_state) {
     SERVER_HEADER
@@ -364,9 +364,9 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
 
             break;
         case NSTEP:
-            if(getStepByIdFdb(item, item->next_step_id, db_path)){
+            if (getStepByIdFdb(item, item->next_step_id, db_path)) {
                 item->state = INIT;
-            }else{
+            } else {
                 item->state = DONE;
             }
             break;

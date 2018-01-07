@@ -156,8 +156,8 @@ int slaveCheckState(Slave *item, int state) {
         return 0;
     }
     I2 td1;
-    I2List tl1 = {&td1, 0};
-    if (!acp_responseReadI2List(&tl1, 1, &request, item->peer)) {
+    I2List tl1 = {&td1, 0,1};
+    if (!acp_responseReadI2List(&tl1, &request, item->peer)) {
 #ifdef MODE_DEBUG
         fprintf(stderr, "slaveCheckState(): acp_responseReadI2List() error where peer.id = %s and remote_id=%d\n", item->peer->id, item->remote_id);
 #endif
@@ -221,8 +221,8 @@ int slaveCheckGoal(Slave *item, float goal) {
         return 0;
     }
     I1F1 td1;
-    I1F1List tl1 = {&td1, 0};
-    if (!acp_responseReadI1F1List(&tl1, 1, &request, item->peer)) {
+    I1F1List tl1 = {&td1, 0,1};
+    if (!acp_responseReadI1F1List(&tl1, &request, item->peer)) {
 #ifdef MODE_DEBUG
         fprintf(stderr, "slaveCheckGoal(): acp_responseReadI1F1List() error where peer.id = %s and remote_id=%d\n", item->peer->id, item->remote_id);
 #endif

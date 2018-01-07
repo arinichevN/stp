@@ -136,6 +136,8 @@ static int getEM_callback(void *data, int argc, char **argv, char **azColName) {
 }
 
 int config_getPeerList(PeerList *list, int *fd, const char *db_path) {
+    list->item = NULL;
+    list->length = list->max_length = 0;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
@@ -147,8 +149,7 @@ int config_getPeerList(PeerList *list, int *fd, const char *db_path) {
         sqlite3_close(db);
         return 1;
     }
-    list->item = (Peer *) malloc(n * sizeof *(list->item));
-    if (list->item == NULL) {
+    if (!initPeerList(list, n)) {
         fprintf(stderr, "config_getPeerList: failed to allocate memory\n");
         sqlite3_close(db);
         return 0;
@@ -170,6 +171,8 @@ int config_getPeerList(PeerList *list, int *fd, const char *db_path) {
 }
 
 int config_getSensorFTSList(SensorFTSList *list, PeerList *peer_list, const char *db_path) {
+    list->item = NULL;
+    list->length = list->max_length = 0;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
@@ -181,8 +184,7 @@ int config_getSensorFTSList(SensorFTSList *list, PeerList *peer_list, const char
         sqlite3_close(db);
         return 1;
     }
-    list->item = (SensorFTS *) malloc(n * sizeof *(list->item));
-    if (list->item == NULL) {
+    if (!initSensorFTSList(list, n)) {
         fprintf(stderr, "config_getSensorFTSList: failed to allocate memory\n");
         sqlite3_close(db);
         return 0;
@@ -264,6 +266,8 @@ int config_getPeer(Peer *item, char * peer_id, int *fd, sqlite3 *db) {
 }
 
 int config_getPhoneNumberListG(S1List *list, int group_id, const char *db_path) {
+    list->item = NULL;
+    list->length = list->max_length = 0;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
@@ -282,7 +286,6 @@ int config_getPhoneNumberListG(S1List *list, int group_id, const char *db_path) 
         sqlite3_close(db);
         return 1;
     }
-    list->length = 0;
     size_t list_size = LINE_SIZE * n * sizeof *(list->item);
     list->item = (char *) malloc(list_size);
     if (list->item == NULL) {
@@ -315,6 +318,8 @@ int config_getPhoneNumberListG(S1List *list, int group_id, const char *db_path) 
 }
 
 int config_getPhoneNumberListO(S1List *list, const char *db_path) {
+    list->item = NULL;
+    list->length = list->max_length = 0;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
@@ -331,7 +336,6 @@ int config_getPhoneNumberListO(S1List *list, const char *db_path) {
         sqlite3_close(db);
         return 1;
     }
-    list->length = 0;
     size_t list_size = LINE_SIZE * n * sizeof *(list->item);
     list->item = (char *) malloc(list_size);
     if (list->item == NULL) {

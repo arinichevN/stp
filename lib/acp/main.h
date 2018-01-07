@@ -58,6 +58,7 @@ typedef struct {
 } Peer;
 
 DEC_LIST(Peer)
+DEC_FUN_LIST_INIT(Peer)
 
 typedef struct {
     char cmd[ACP_COMMAND_MAX_SIZE];
@@ -180,13 +181,13 @@ typedef struct {
 DEC_LIST(EM)
 DEC_FUN_LIST_INIT(EM)
         
-#define FUN_ACP_REQUEST_DATA_TO(T) void acp_requestDataTo ## T(ACPRequest *request, T *list, size_t list_max_size){\
-acp_dataTo ## T(request->data, list, list_max_size);\
+#define FUN_ACP_REQUEST_DATA_TO(T) void acp_requestDataTo ## T(ACPRequest *request, T *list){\
+acp_dataTo ## T(request->data, list);\
 }
-#define DEC_FUN_ACP_REQUEST_DATA_TO(T) extern void acp_requestDataTo ## T(ACPRequest *request, T *list, size_t list_max_size);
+#define DEC_FUN_ACP_REQUEST_DATA_TO(T) extern void acp_requestDataTo ## T(ACPRequest *request, T *list);
 
-#define FUN_ACP_RESPONSE_READ(T) int acp_responseRead ## T(T *list, size_t list_max_size, ACPRequest *request, Peer *peer) {ACP_RESPONSE_CREATE if (!acp_responseRead(&response, peer)) {return 0;}if(!acp_responseCheck(&response, request)) {return 0;}acp_dataTo ## T(response.data, list, list_max_size);    return 1;}
-#define DEC_FUN_ACP_RESPONSE_READ(T) extern int acp_responseRead ## T(T *list, size_t list_max_size, ACPRequest *request, Peer *peer);
+#define FUN_ACP_RESPONSE_READ(T) int acp_responseRead ## T(T *list, ACPRequest *request, Peer *peer) {ACP_RESPONSE_CREATE if (!acp_responseRead(&response, peer)) {return 0;}if(!acp_responseCheck(&response, request)) {return 0;}acp_dataTo ## T(response.data, list);    return 1;}
+#define DEC_FUN_ACP_RESPONSE_READ(T) extern int acp_responseRead ## T(T *list, ACPRequest *request, Peer *peer);
 
 
 #define ACP_CMD_IS(V) acp_cmdcmp(&request, V)
