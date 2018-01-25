@@ -146,15 +146,17 @@ int gpioSetup() {
     int pagesize = sysconf(_SC_PAGESIZE);
     int fd;
     if ((fd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC)) < 0) {
-        perror("gpioSetup()");
+        fprintf(stderr, "%s(): ", __FUNCTION__);
+        perror("open()");
         return 0;
     }
     int addr = 0x01c20800 & ~(pagesize - 1);
     int offset = 0x01c20800 & (pagesize - 1);
-    gpio_buf = (volatile uint32_t *)mmap(NULL, (0x800 + pagesize - 1) & ~(pagesize - 1), PROT_WRITE | PROT_READ, MAP_SHARED, fd, addr);
+    gpio_buf = mmap(NULL, (0x800 + pagesize - 1) & ~(pagesize - 1), PROT_WRITE | PROT_READ, MAP_SHARED, fd, addr);
     close(fd);
     if (gpio_buf == MAP_FAILED) {
-        perror("gpioSetup(): mmap failed");
+        fprintf(stderr, "%s(): ", __FUNCTION__);
+        perror("mmap()");
         return 0;
     }
     gpio_buf += offset;

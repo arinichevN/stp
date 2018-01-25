@@ -8,12 +8,16 @@ char db_public_path[LINE_SIZE];
 
 int sock_port = -1;
 int sock_fd = -1;
-int sock_fd_tf = -1;
+
 Peer peer_client = {.fd = &sock_fd, .addr_size = sizeof peer_client.addr};
 struct timespec cycle_duration = {0, 0};
-DEF_THREAD
-Mutex progl_mutex = {.created = 0, .attr_initialized = 0};
+
+Mutex progl_mutex = MUTEX_INITIALIZER;
+Mutex db_data_mutex = MUTEX_INITIALIZER;
+
 I1List i1l;
+I2List i2l;
+
 PeerList peer_list;
 ProgList prog_list = {NULL, NULL, 0};
 
@@ -61,50 +65,56 @@ void initApp() {
     if (!initMutex(&progl_mutex)) {
         exit_nicely_e("initApp: failed to initialize prog mutex\n");
     }
+    if (!initMutex(&db_data_mutex)) {
+        exit_nicely_e("initApp: failed to initialize prog mutex\n");
+    }
 
     if (!initServer(&sock_fd, sock_port)) {
         exit_nicely_e("initApp: failed to initialize udp server\n");
     }
-
-    if (!initClient(&sock_fd_tf, WAIT_RESP_TIMEOUT)) {
-        exit_nicely_e("initApp: failed to initialize udp client\n");
-    }
 }
 
 int initData() {
-    if (!config_getPeerList(&peer_list, &sock_fd_tf, db_public_path)) {
-        FREE_LIST(&peer_list);
-        return 0;
-    }
-    if (!loadActiveProg(&prog_list, &peer_list, db_data_path)) {
-#ifdef MODE_DEBUG
-        fputs("initData: ERROR: failed to load active programs\n", stderr);
-#endif
-        freeProg(&prog_list);
-        FREE_LIST(&peer_list);
-        return 0;
-    }
     if (!initI1List(&i1l, ACP_BUFFER_MAX_SIZE)) {
 #ifdef MODE_DEBUG
-        fputs("initData: ERROR: failed to allocate memory for i1l\n", stderr);
+        fputs("initData(): failed to allocate memory for i1l\n", stderr);
 #endif
-        freeProg(&prog_list);
-        FREE_LIST(&peer_list);
         return 0;
     }
-    if (!THREAD_CREATE) {
+    if (!initI2List(&i2l, ACP_BUFFER_MAX_SIZE)) {
 #ifdef MODE_DEBUG
-        fputs("initData: ERROR: failed to create thread\n", stderr);
+        fputs("initData(): failed to allocate memory for i2l\n", stderr);
 #endif
         FREE_LIST(&i1l);
-        freeProg(&prog_list);
-        FREE_LIST(&peer_list);
         return 0;
     }
+    if (!config_getPeerList(&peer_list, NULL, db_public_path)) {
+#ifdef MODE_DEBUG
+        fputs("initData(): failed to allocate memory for peer_list\n", stderr);
+#endif
+        FREE_LIST(&i2l);
+        FREE_LIST(&i1l);
+        return 0;
+    }
+    if (lockMutex(&db_data_mutex)) {
+        if (!loadActiveProg(&prog_list, &peer_list, db_data_path)) {
+#ifdef MODE_DEBUG
+            fputs("initData(): failed to load active programs\n", stderr);
+#endif
+            freeProgList(&prog_list);
+            FREE_LIST(&peer_list);
+            FREE_LIST(&i2l);
+            FREE_LIST(&i1l);
+            return 0;
+        }
+        unlockMutex(&db_data_mutex);
+    }
+
     return 1;
 }
 
 #define PARSE_I1LIST acp_requestDataToI1List(&request, &i1l);if (i1l.length <= 0) {return;}
+#define PARSE_I2LIST acp_requestDataToI2List(&request, &i2l);if (i2l.length <= 0) {return;}
 
 void serverRun(int *state, int init_state) {
     SERVER_HEADER
@@ -113,41 +123,59 @@ void serverRun(int *state, int init_state) {
     if (ACP_CMD_IS(ACP_CMD_PROG_STOP)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                slaveSetStateM(&curr->slave, DISABLED);
-                deleteProgById(i1l.item[i], &prog_list, db_data_path);
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (lockMutex(&item->mutex)) {
+                    slaveSetStateM(&item->slave, DISABLED);
+                    unlockMutex(&item->mutex);
+                }
+                if (lockMutex(&db_data_mutex)) {
+                    deleteProgById(i1l.item[i], &prog_list, db_data_path);
+                    unlockMutex(&db_data_mutex);
+                }
             }
         }
         return;
     } else if (ACP_CMD_IS(ACP_CMD_PROG_START)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            addProgById(i1l.item[i], &prog_list, &peer_list, db_data_path);
+            if (lockMutex(&db_data_mutex)) {
+                addProgById(i1l.item[i], &prog_list, &peer_list, NULL, db_data_path);
+                unlockMutex(&db_data_mutex);
+            }
         }
         return;
     } else if (ACP_CMD_IS(ACP_CMD_PROG_RESET)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                slaveSetStateM(&curr->slave, DISABLED);
-                deleteProgById(i1l.item[i], &prog_list, db_data_path);
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (lockMutex(&item->mutex)) {
+                    slaveSetStateM(&item->slave, DISABLED);
+                    unlockMutex(&item->mutex);
+                }
+                if (lockMutex(&db_data_mutex)) {
+                    deleteProgById(i1l.item[i], &prog_list, db_data_path);
+                    unlockMutex(&db_data_mutex);
+                }
             }
         }
         for (int i = 0; i < i1l.length; i++) {
-            addProgById(i1l.item[i], &prog_list, &peer_list, db_data_path);
+            if (lockMutex(&db_data_mutex)) {
+                addProgById(i1l.item[i], &prog_list, &peer_list, NULL, db_data_path);
+                unlockMutex(&db_data_mutex);
+            }
         }
         return;
     } else if (ACP_CMD_IS(ACP_CMD_PROG_ENABLE)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                if (lockProg(curr)) {
-                    progEnable(curr);
-                    saveProgEnable(curr->id, 1, db_data_path);
-                    unlockProg(curr);
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (lockMutex(&item->mutex)) {
+                    progEnable(item);
+                    if (item->save)db_saveTableFieldInt("prog", "enable", item->id, 1, NULL, db_data_path);
+                    unlockMutex(&item->mutex);
                 }
             }
         }
@@ -155,12 +183,25 @@ void serverRun(int *state, int init_state) {
     } else if (ACP_CMD_IS(ACP_CMD_PROG_DISABLE)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                if (lockProg(curr)) {
-                    progDisable(curr);
-                    saveProgEnable(curr->id, 0, db_data_path);
-                    unlockProg(curr);
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (lockMutex(&item->mutex)) {
+                    progDisable(item);
+                    if (item->save)db_saveTableFieldInt("prog", "enable", item->id, 0, NULL, db_data_path);
+                    unlockMutex(&item->mutex);
+                }
+            }
+        }
+        return;
+    } else if (ACP_CMD_IS(ACP_CMD_PROG_SET_SAVE)) {
+        PARSE_I2LIST
+        for (int i = 0; i < i2l.length; i++) {
+            Prog *item = getProgById(i2l.item[i].p0, &prog_list);
+            if (item != NULL) {
+                if (lockMutex(&item->mutex)) {
+                    item->save = i2l.item[i].p1;
+                    if (item->save)db_saveTableFieldInt("prog", "save", item->id, i2l.item[i].p1, NULL, db_data_path);
+                    unlockMutex(&item->mutex);
                 }
             }
         }
@@ -168,9 +209,9 @@ void serverRun(int *state, int init_state) {
     } else if (ACP_CMD_IS(ACP_CMD_PROG_GET_DATA_RUNTIME)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                if (!bufCatProgRuntime(curr, &response)) {
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (!bufCatProgRuntime(item, &response)) {
                     return;
                 }
             }
@@ -178,9 +219,9 @@ void serverRun(int *state, int init_state) {
     } else if (ACP_CMD_IS(ACP_CMD_PROG_GET_DATA_INIT)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                if (!bufCatProgInit(curr, &response)) {
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (!bufCatProgInit(item, &response)) {
                     return;
                 }
             }
@@ -188,9 +229,9 @@ void serverRun(int *state, int init_state) {
     } else if (ACP_CMD_IS(ACP_CMD_PROG_GET_ENABLED)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
-            Prog *curr = getProgById(i1l.item[i], &prog_list);
-            if (curr != NULL) {
-                if (!bufCatProgEnabled(curr, &response)) {
+            Prog *item = getProgById(i1l.item[i], &prog_list);
+            if (item != NULL) {
+                if (!bufCatProgEnabled(item, &response)) {
                     return;
                 }
             }
@@ -200,7 +241,7 @@ void serverRun(int *state, int init_state) {
     acp_responseSend(&response, &peer_client);
 }
 
-int stepControl(Step *item, Slave *slave, const char * db_path) {
+int stepControl(Step *item, Slave *slave, Mutex *db_mutex, const char * db_path) {
 #ifdef MODE_DEBUG
     char *state = getStateStr(item->state);
     char *state_ch = getStateStr(item->state_ch);
@@ -214,13 +255,13 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
 #endif
     switch (item->state) {
         case INIT:
-            slave->r2.crepeat = slave->r3.crepeat = 0;
-            slave->r2.state = slave->r3.state = INIT;
+            repeaterReset(&slave->r2);
+            repeaterReset(&slave->r3);
             ton_ts_reset(&item->tmr);
             item->state_ch = OFF;
             item->state_sp = OFF;
             if (item->goal_change_mode == CHANGE_MODE_INSTANT) {
-                item->state = SET_GOAL;
+                item->state = RUN;
             }
             if (item->goal_change_mode == CHANGE_MODE_EVEN && item->stop_kind == STOP_KIND_TIME) {
                 item->state = GET_VALUE;
@@ -254,11 +295,9 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
                         item->wait_above = (item->goal > value);
                         item->state_sp = BYGOAL;
                     }
-                    if (item->goal_change_mode == CHANGE_MODE_INSTANT) {
-                        item->state = SET_GOAL;
-                    } else {
-                        item->state = RUN;
-                    }
+
+                    item->state = RUN;
+
                     break;
                 case WAIT:
                     break;
@@ -268,47 +307,34 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
             }
             break;
         }
-        case SET_GOAL:
-            switch (slaveSetGoal(slave, &slave->r2, item->goal)) {
-                case DONE:
-                    item->state = RUN;
-                    break;
-                case WAIT:
-                    break;
-                case FAILURE:
-                    item->state = FAILURE;
-                    break;
-            }
-            break;
         case RUN:
-
-            //goal correction
-            switch (item->state_ch) {
-                case RUN:
-                {
-                    struct timespec dif = getTimePassed_ts(item->tmr.start);
-                    float goal = item->value_start + dif.tv_sec * item->goal_correction + dif.tv_nsec * item->goal_correction * NANO_FACTOR;
-                    slaveSetGoalM(slave, goal);
-                    /*
-                                        switch (slaveSetGoal(slave, goal)) {
-                                            case DONE:
-                                                break;
-                                            case WAIT:
-                                                break;
-                                            case FAILURE:
-                                                item->state_ch = FAILURE;
-                                                break;
-                                        }
-                     */
-                    break;
+        {
+            float goal;
+            int done = 0;
+            if (item->goal_change_mode == CHANGE_MODE_INSTANT) {
+                goal = item->goal;
+                done = 1;
+            } else {
+                switch (item->state_ch) {
+                    case RUN:
+                    {
+                        struct timespec dif = getTimePassed_ts(item->tmr.start);
+                        goal = item->value_start + dif.tv_sec * item->goal_correction + dif.tv_nsec * item->goal_correction * NANO_FACTOR;
+                        done = 1;
+                        break;
+                    }
+                    case FAILURE:
+                        break;
+                    case OFF:
+                        break;
+                    default:
+                        item->state_ch = FAILURE;
+                        break;
                 }
-                case FAILURE:
-                    break;
-                case OFF:
-                    break;
-                default:
-                    item->state_ch = FAILURE;
-                    break;
+            }
+
+            if (done) {
+                slaveSetGoalM(slave, goal);
             }
 
             //end of step control
@@ -363,11 +389,15 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
             }
 
             break;
+        }
         case NSTEP:
-            if (getStepByIdFdb(item, item->next_step_id, db_path)) {
-                item->state = INIT;
-            } else {
-                item->state = DONE;
+            if (lockMutex(db_mutex)) {
+                if (getStepByIdFdb(item, item->next_step_id, db_path)) {
+                    item->state = INIT;
+                } else {
+                    item->state = DONE;
+                }
+                unlockMutex(db_mutex);
             }
             break;
         case DONE:
@@ -386,7 +416,7 @@ int stepControl(Step *item, Slave *slave, const char * db_path) {
     return item->state;
 }
 
-int repeatControl(Repeat *item, Slave *slave, const char * db_path) {
+int repeatControl(Repeat *item, Slave *slave, Mutex *db_mutex, const char * db_path) {
 #ifdef MODE_DEBUG
     char *state = getStateStr(item->state);
     printf("-repeat: id:%d state:%s count:%d c_count:%d \n", item->id, state, item->count, item->c_count);
@@ -404,15 +434,18 @@ int repeatControl(Repeat *item, Slave *slave, const char * db_path) {
             item->state = NSTEP;
             break;
         case FSTEP:
-            if (getStepByIdFdb(&item->c_step, item->first_step_id, db_path)) {
-                item->c_count++;
-                item->state = RUN;
-            } else {
-                item->state = NSTEP;
+            if (lockMutex(db_mutex)) {
+                if (getStepByIdFdb(&item->c_step, item->first_step_id, db_path)) {
+                    item->c_count++;
+                    item->state = RUN;
+                } else {
+                    item->state = NSTEP;
+                }
+                unlockMutex(db_mutex);
             }
             break;
         case RUN:
-            switch (stepControl(&item->c_step, slave, db_path)) {
+            switch (stepControl(&item->c_step, slave, db_mutex, db_path)) {
                 case DONE:
                     item->state = CREP;
                     break;
@@ -424,10 +457,13 @@ int repeatControl(Repeat *item, Slave *slave, const char * db_path) {
             }
             break;
         case NSTEP:
-            if (getRepeatByIdFdb(item, item->next_repeat_id, db_path)) {
-                item->state = INIT;
-            } else {
-                item->state = DONE;
+            if (lockMutex(db_mutex)) {
+                if (getRepeatByIdFdb(item, item->next_repeat_id, db_path)) {
+                    item->state = INIT;
+                } else {
+                    item->state = DONE;
+                }
+                unlockMutex(db_mutex);
             }
             break;
         case DONE:
@@ -444,7 +480,7 @@ int repeatControl(Repeat *item, Slave *slave, const char * db_path) {
     return item->state;
 }
 
-void progControl(Prog *item, const char * db_path) {
+void progControl(Prog *item, Mutex *db_mutex, const char * db_path) {
 #ifdef MODE_DEBUG
     char *state = getStateStr(item->state);
     printf("prog: id:%d state:%s \n", item->id, state);
@@ -453,10 +489,13 @@ void progControl(Prog *item, const char * db_path) {
         case INIT:
             item->slave.r1.crepeat = 0;
             item->slave.r1.state = INIT;
-            if (!getRepeatByIdFdb(&item->c_repeat, item->first_repeat_id, db_path)) {
-                item->state = FAILURE;
+            if (lockMutex(db_mutex)) {
+                if (!getRepeatByIdFdb(&item->c_repeat, item->first_repeat_id, db_path)) {
+                    item->state = FAILURE;
+                }
+                item->state = SLAVE_ENABLE;
+                unlockMutex(db_mutex);
             }
-            item->state = SLAVE_ENABLE;
             break;
         case SLAVE_ENABLE:
             switch (slaveSetState(&item->slave, &item->slave.r1, ENABLED)) {
@@ -471,7 +510,7 @@ void progControl(Prog *item, const char * db_path) {
             }
             break;
         case RUN:
-            switch (repeatControl(&item->c_repeat, &item->slave, db_path)) {
+            switch (repeatControl(&item->c_repeat, &item->slave, db_mutex, db_path)) {
                 case DONE:
                     item->state = NSTEP;
                     break;
@@ -483,10 +522,13 @@ void progControl(Prog *item, const char * db_path) {
             }
             break;
         case NSTEP:
-            if (getRepeatByIdFdb(&item->c_repeat, item->c_repeat.next_repeat_id, db_path)) {
-                item->state = RUN;
-            } else {
-                item->state = OFF;
+            if (lockMutex(db_mutex)) {
+                if (getRepeatByIdFdb(&item->c_repeat, item->c_repeat.next_repeat_id, db_path)) {
+                    item->state = RUN;
+                } else {
+                    item->state = OFF;
+                }
+                unlockMutex(db_mutex);
             }
             break;
         case DISABLE:
@@ -507,52 +549,43 @@ void progControl(Prog *item, const char * db_path) {
     }
 }
 
+void cleanup_handler(void *arg) {
+    Prog *item = arg;
+    printf("cleaning up thread %d\n", item->id);
+}
+
 void *threadFunction(void *arg) {
-    THREAD_DEF_CMD
+    Prog *item = arg;
 #ifdef MODE_DEBUG
-            puts("threadFunction: running...");
+    printf("thread for program with id=%d has been started\n", item->id);
+#endif
+#ifdef MODE_DEBUG
+    pthread_cleanup_push(cleanup_handler, item);
 #endif
     while (1) {
         struct timespec t1 = getCurrentTime();
-
-        lockProgList();
-        Prog *curr = prog_list.top;
-        unlockProgList();
-        while (1) {
-            if (curr == NULL) {
-                break;
+        int old_state;
+        if (threadCancelDisable(&old_state)) {
+            if (lockMutex(&item->mutex)) {
+                progControl(item, &db_data_mutex, db_data_path);
+                unlockMutex(&item->mutex);
             }
-            if (tryLockProg(curr)) {
-                progControl(curr, db_data_path);
-                Prog *temp = curr;
-                curr = curr->next;
-                unlockProg(temp);
-            }
-            THREAD_EXIT_ON_CMD
+            threadSetCancelState(old_state);
         }
-        THREAD_EXIT_ON_CMD
-        sleepRest(cycle_duration, t1);
+        sleepRest(item->cycle_duration, t1);
     }
-}
-
-void freeProg(ProgList * list) {
-    Prog *curr = list->top, *temp;
-    while (curr != NULL) {
-        temp = curr;
-        curr = curr->next;
-        free(temp);
-    }
-    list->top = NULL;
-    list->last = NULL;
-    list->length = 0;
+#ifdef MODE_DEBUG
+    pthread_cleanup_pop(1);
+#endif
 }
 
 void freeData() {
-    THREAD_STOP
+    stopAllProgThreads(&prog_list);
     secure();
-    freeProg(&prog_list);
-    FREE_LIST(&i1l);
+    freeProgList(&prog_list);
     FREE_LIST(&peer_list);
+    FREE_LIST(&i2l);
+    FREE_LIST(&i1l);
 #ifdef MODE_DEBUG
     puts("freeData: done");
 #endif
@@ -561,7 +594,7 @@ void freeData() {
 void freeApp() {
     freeData();
     freeSocketFd(&sock_fd);
-    freeSocketFd(&sock_fd_tf);
+    freeMutex(&db_data_mutex);
     freeMutex(&progl_mutex);
 }
 
@@ -582,12 +615,6 @@ void exit_nicely_e(char *s) {
 }
 
 int main(int argc, char** argv) {
-    if (geteuid() != 0) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "%s: root user expected\n", APP_NAME_STR);
-#endif
-        return (EXIT_FAILURE);
-    }
 #ifndef MODE_DEBUG
     daemon(0, 0);
 #endif
@@ -597,49 +624,34 @@ int main(int argc, char** argv) {
     }
     int data_initialized = 0;
     while (1) {
+#ifdef MODE_DEBUG
+        printf("main(): %s %d\n", getAppState(app_state), data_initialized);
+#endif
         switch (app_state) {
             case APP_INIT:
-#ifdef MODE_DEBUG
-                puts("MAIN: init");
-#endif
                 initApp();
                 app_state = APP_INIT_DATA;
                 break;
             case APP_INIT_DATA:
-#ifdef MODE_DEBUG
-                puts("MAIN: init data");
-#endif
                 data_initialized = initData();
                 app_state = APP_RUN;
                 delayUsIdle(1000000);
                 break;
             case APP_RUN:
-#ifdef MODE_DEBUG
-                puts("MAIN: run");
-#endif
                 serverRun(&app_state, data_initialized);
                 break;
             case APP_STOP:
-#ifdef MODE_DEBUG
-                puts("MAIN: stop");
-#endif
                 freeData();
                 data_initialized = 0;
                 app_state = APP_RUN;
                 break;
             case APP_RESET:
-#ifdef MODE_DEBUG
-                puts("MAIN: reset");
-#endif
                 freeApp();
                 delayUsIdle(1000000);
                 data_initialized = 0;
                 app_state = APP_INIT;
                 break;
             case APP_EXIT:
-#ifdef MODE_DEBUG
-                puts("MAIN: exit");
-#endif
                 exit_nicely();
                 break;
             default:

@@ -42,8 +42,7 @@
 #define CHANGE_MODE_EVEN_STR "even"
 #define CHANGE_MODE_INSTANT_STR "instant"
 
-#define PROG_LIST_LOOP_DF {Prog *item = prog_list.top;
-#define PROG_LIST_LOOP_ST while (item != NULL) {
+#define PROG_LIST_LOOP_ST {Prog *item = prog_list.top; while (item != NULL) {
 #define PROG_LIST_LOOP_SP item = item->next; } item = prog_list.top;}
 
 typedef struct {
@@ -53,12 +52,12 @@ typedef struct {
 } Repeater;
 
 typedef struct {
-    Peer *peer;
+    Peer peer;
     int remote_id;
     int check;
     Repeater r1;
     Repeater r2;
-     Repeater r3;
+    Repeater r3;
 } Slave;
 
 typedef struct {
@@ -94,8 +93,13 @@ struct prog_st {
     int first_repeat_id;
     Slave slave;
     Repeat c_repeat;
+    int save;
 
     int state;
+    
+    int sock_fd;
+    struct timespec cycle_duration;
+    pthread_t thread;
     Mutex mutex;
     struct prog_st *next;
 };
@@ -105,8 +109,9 @@ typedef struct prog_st Prog;
 DEC_LLIST(Prog)
 
 typedef struct {
-    sqlite3 *db;
+    sqlite3 *db_data;
     PeerList *peer_list;
+    Prog *prog;
     ProgList *prog_list;
 } ProgData;
 
@@ -149,13 +154,9 @@ extern int initData();
 
 extern void serverRun(int *state, int init_state);
 
-extern void progControl(Prog *item, const char * db_path);
+extern void progControl(Prog *item, Mutex *db_mutex, const char * db_path);
 
 extern void *threadFunction(void *arg);
-
-extern int createThread_ctl();
-
-extern void freeProg(ProgList * list);
 
 extern void freeData();
 

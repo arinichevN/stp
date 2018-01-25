@@ -1,56 +1,102 @@
 #include "main.h"
 
-int checkProg(const Prog *item, const ProgList *list) {
-    if (item->slave.peer == NULL) {
-        fprintf(stderr, "checkProg(): no peer attached to prog with id = %d\n", item->id);
-        return 0;
+int getProg_callback(void *d, int argc, char **argv, char **azColName) {
+    ProgData * data = d;
+    Prog *item = data->prog;
+    int load = 0, enable = 0;
+
+    int c = 0;
+    for (int i = 0; i < argc; i++) {
+        if (DB_COLUMN_IS("id")) {
+            item->id = atoi(argv[i]);
+            c++;
+        } else if (DB_COLUMN_IS("peer_id")) {
+            Peer *peer = getPeerById(argv[i], data->peer_list);
+            if (peer == NULL) {
+#ifdef MODE_DEBUG
+                fprintf(stderr, "%s(): no peer with id %s found\n", __FUNCTION__, argv[i]);
+#endif
+                return EXIT_FAILURE;
+            }
+            item->slave.peer = *peer;
+            c++;
+        } else if (DB_COLUMN_IS("first_repeat_id")) {
+            item->first_repeat_id = atoi(argv[i]);
+            c++;
+        } else if (DB_COLUMN_IS("remote_id")) {
+            item->slave.remote_id = atoi(argv[i]);
+            c++;
+        } else if (DB_COLUMN_IS("check")) {
+            item->slave.check = atoi(argv[i]);
+            c++;
+        } else if (DB_COLUMN_IS("retry_count")) {
+            item->slave.r1.retry_count = item->slave.r2.retry_count = item->slave.r3.retry_count = atoi(argv[i]);
+            c++;
+        } else if (DB_COLUMN_IS("enable")) {
+            enable = atoi(argv[i]);
+            c++;
+        } else if (DB_COLUMN_IS("load")) {
+            load = atoi(argv[i]);
+            c++;
+        } else {
+#ifdef MODE_DEBUG
+            fprintf(stderr, "%s(): unknown column\n", __FUNCTION__);
+#endif
+
+        }
     }
-    if (item->slave.r1.retry_count < 0) {
-        fprintf(stderr, "checkProg(): bad retry_count where id = %d\n", item->id);
-        return 0;
+#define N 8
+    if (c != N) {
+        fprintf(stderr, "%s(): required %d columns but %d found\n", __FUNCTION__, N, c);
+        return EXIT_FAILURE;
     }
-    //unique id
-    if (getProgById(item->id, list) != NULL) {
-        fprintf(stderr, "checkProg(): prog with id = %d is already running\n", item->id);
-        return 0;
+#undef N
+    if (enable) {
+        item->state=INIT;
+    } else {
+        item->state=OFF;
     }
-    return 1;
+    if (!load) {
+        db_saveTableFieldInt("prog", "load", item->id, 1, data->db_data, NULL);
+    }
+    return EXIT_SUCCESS;
 }
 
-int checkStep(const Step *item) {
-    if (item->duration.tv_sec < 0 || item->duration.tv_nsec < 0) {
-        fprintf(stderr, "checkStep(): bad duration where id = %d\n", item->id);
+int getProgByIdFDB(int prog_id, Prog *item, PeerList *em_list, sqlite3 *dbl, const char *db_path) {
+    if (dbl != NULL && db_path != NULL) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "%s(): dbl xor db_path expected\n", __FUNCTION__);
+#endif
         return 0;
     }
-    if (item->goal_change_mode == UNKNOWN) {
-        fprintf(stderr, "checkStep(): bad goal_change_mode where id = %d\n", item->id);
+    sqlite3 *db;
+    int close = 0;
+    if (db_path != NULL) {
+        if (!db_open(db_path, &db)) {
+            return 0;
+        }
+        close = 1;
+    } else {
+        db = dbl;
+    }
+    char q[LINE_SIZE];
+    ProgData data = {.peer_list = em_list, .prog = item, .db_data = db};
+    snprintf(q, sizeof q, "select " PROG_FIELDS " from prog where id=%d", prog_id);
+    if (!db_exec(db, q, getProg_callback, &data)) {
+#ifdef MODE_DEBUG
+        fprintf(stderr, "%s(): query failed\n", __FUNCTION__);
+#endif
+        if (close)sqlite3_close(db);
         return 0;
     }
-    if (item->stop_kind == UNKNOWN) {
-        fprintf(stderr, "checkStep(): bad stop_kind where id = %d\n", item->id);
-        return 0;
-    }
-/*
-    if (item->goal_change_mode == CHANGE_MODE_EVEN && item->stop_kind == STOP_KIND_GOAL) {
-        fprintf(stderr, "checkStep(): even change mode and stop by goal are incompatible where id = %d\n", item->id);
-        return 0;
-    }
-*/
-    return 1;
-}
-
-int checkRepeat(const Repeat *item) {
-    if (item->count < 0) {
-        fprintf(stderr, "checkRepeat(): bad count where id = %d\n", item->id);
-        return 0;
-    }
+    if (close)sqlite3_close(db);
     return 1;
 }
 
 int addProg(Prog *item, ProgList *list) {
     if (list->length >= INT_MAX) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "addProg: ERROR: can not load prog with id=%d - list length exceeded\n", item->id);
+        fprintf(stderr, "%s(): can not load prog with id=%d - list length exceeded\n", __FUNCTION__, item->id);
 #endif
         return 0;
     }
@@ -59,155 +105,35 @@ int addProg(Prog *item, ProgList *list) {
         list->top = item;
         unlockProgList();
     } else {
-        lockProg(list->last);
+        lockMutex(&list->last->mutex);
         list->last->next = item;
-        unlockProg(list->last);
+        unlockMutex(&list->last->mutex);
     }
     list->last = item;
     list->length++;
 #ifdef MODE_DEBUG
-    printf("addProg: prog with id=%d loaded\n", item->id);
+    printf("%s(): prog with id=%d loaded\n", __FUNCTION__, item->id);
 #endif
     return 1;
-}
-
-void saveProgLoad(int id, int v, sqlite3 *db) {
-    char q[LINE_SIZE];
-    snprintf(q, sizeof q, "update prog set load=%d where id=%d", v, id);
-    if (!db_exec(db, q, 0, 0)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "saveProgLoad: query failed: %s\n", q);
-#endif
-    }
-}
-
-void saveProgEnable(int id, int v, const char* db_path) {
-    sqlite3 *db;
-    if (!db_open(db_path, &db)) {
-        printfe("saveProgEnable: failed to open db: %s\n", db_path);
-        return;
-    }
-    char q[LINE_SIZE];
-    snprintf(q, sizeof q, "update prog set enable=%d where id=%d", v, id);
-    if (!db_exec(db, q, 0, 0)) {
-        printfe("saveProgEnable: query failed: %s\n", q);
-    }
-}
-
-void saveProgFieldFloat(int id, float value, const char* db_path, const char *field) {
-    sqlite3 *db;
-    if (!db_open(db_path, &db)) {
-        printfe("saveProgFieldFloat: failed to open db where id=%d\n", id);
-        return;
-    }
-    char q[LINE_SIZE];
-    snprintf(q, sizeof q, "update prog set %s=%f where id=%d", field, value, id);
-    if (!db_exec(db, q, 0, 0)) {
-        printfe("saveProgFieldFloat: query failed: %s\n", q);
-    }
-    sqlite3_close(db);
-}
-
-void saveProgFieldInt(int id, int value, const char* db_path, const char *field) {
-    sqlite3 *db;
-    if (!db_open(db_path, &db)) {
-        printfe("saveProgFieldInt: failed to open db where id=%d\n", id);
-        return;
-    }
-    char q[LINE_SIZE];
-    snprintf(q, sizeof q, "update prog set %s=%d where id=%d", field, value, id);
-    if (!db_exec(db, q, 0, 0)) {
-        printfe("saveProgFieldInt: query failed: %s\n", q);
-    }
-    sqlite3_close(db);
-}
-
-void saveProgFieldText(int id, const char * value, const char* db_path, const char *field) {
-    sqlite3 *db;
-    if (!db_open(db_path, &db)) {
-        printfe("saveProgFieldText: failed to open db where id=%d\n", id);
-        return;
-    }
-    char q[LINE_SIZE];
-    snprintf(q, sizeof q, "update prog set %s='%s' where id=%d", field, value, id);
-    if (!db_exec(db, q, 0, 0)) {
-        printfe("saveProgFieldText: query failed: %s\n", q);
-    }
-    sqlite3_close(db);
-}
-
-int loadProg_callback(void *d, int argc, char **argv, char **azColName) {
-    ProgData *data = d;
-    Prog *item = (Prog *) malloc(sizeof *(item));
-    if (item == NULL) {
-        fputs("loadProg_callback: failed to allocate memory\n", stderr);
-        return 0;
-    }
-    memset(item, 0, sizeof *item);
-    int load = 0, enable = 0;
-    for (int i = 0; i < argc; i++) {
-        if (strcmp("id", azColName[i]) == 0) {
-            item->id = atoi(argv[i]);
-        } else if (strcmp("first_repeat_id", azColName[i]) == 0) {
-            item->first_repeat_id = atoi(argv[i]);
-        } else if (strcmp("peer_id", azColName[i]) == 0) {
-            item->slave.peer = getPeerById(argv[i], data->peer_list);
-        } else if (strcmp("remote_id", azColName[i]) == 0) {
-            item->slave.remote_id = atoi(argv[i]);
-        } else if (strcmp("check", azColName[i]) == 0) {
-            item->slave.check = atoi(argv[i]);
-        } else if (strcmp("retry_count", azColName[i]) == 0) {
-            item->slave.r1.retry_count=item->slave.r2.retry_count =item->slave.r3.retry_count = atoi(argv[i]);
-        } else if (strcmp("enable", azColName[i]) == 0) {
-            enable = atoi(argv[i]);
-        } else if (strcmp("load", azColName[i]) == 0) {
-            load = atoi(argv[i]);
-        } else {
-#ifdef MODE_DEBUG
-            fprintf(stderr,"loadProg_callback: unknown column: %s\n", azColName[i]);
-#endif
-            return EXIT_FAILURE;
-        }
-    }
-
-    if (enable) {
-        item->state = INIT;
-    } else {
-        item->state = DISABLE;
-    }
-
-    item->next = NULL;
-
-    if (!initMutex(&item->mutex)) {
-        free(item);
-        return EXIT_FAILURE;
-    }
-    if (!checkProg(item, data->prog_list)) {
-        free(item);
-        return EXIT_FAILURE;
-    }
-    if (!addProg(item, data->prog_list)) {
-        free(item);
-        return EXIT_FAILURE;
-    }
-    if (!load) {
-        saveProgLoad(item->id, 1, data->db);
-    }
-    return EXIT_SUCCESS;
 }
 
 int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
     Repeat *item = (Repeat *) d;
     memset(item, 0, sizeof *item);
+    int c=0;
     for (int i = 0; i < argc; i++) {
-        if (strcmp("id", azColName[i]) == 0) {
+        if (DB_COLUMN_IS("id")) {
             item->id = atoi(argv[i]);
-        } else if (strcmp("first_step_id", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("first_step_id")) {
             item->first_step_id = atof(argv[i]);
-        } else if (strcmp("count", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("count")) {
             item->count = atoi(argv[i]);
-        } else if (strcmp("next_repeat_id", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("next_repeat_id")) {
             item->next_repeat_id = atoi(argv[i]);
+            c++;
         } else {
 #ifdef MODE_DEBUG
             fprintf(stderr, "loadRepeat_callback: unknown column: %s\n", azColName[i]);
@@ -215,6 +141,12 @@ int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
             return EXIT_FAILURE;
         }
     }
+    #define N 4
+    if (c != N) {
+        fprintf(stderr, "%s(): required %d columns but %d found\n", __FUNCTION__, N, c);
+        return EXIT_FAILURE;
+    }
+#undef N
     item->state = INIT;
     if (!checkRepeat(item)) {
         return EXIT_FAILURE;
@@ -225,15 +157,19 @@ int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
 int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
     Step *item = (Step *) d;
     memset(item, 0, sizeof *item);
+    int c=0;
     for (int i = 0; i < argc; i++) {
-        if (strcmp("id", azColName[i]) == 0) {
+        if (DB_COLUMN_IS("id")) {
             item->id = atoi(argv[i]);
-        } else if (strcmp("goal", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("goal")) {
             item->goal = atof(argv[i]);
-        } else if (strcmp("duration", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("duration")) {
             item->duration.tv_sec = atoi(argv[i]);
             item->duration.tv_nsec = 0;
-        } else if (strcmp("goal_change_mode", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("goal_change_mode")) {
             if (strcmp(CHANGE_MODE_EVEN_STR, argv[i]) == 0) {
                 item->goal_change_mode = CHANGE_MODE_EVEN;
             } else if (strcmp(CHANGE_MODE_INSTANT_STR, argv[i]) == 0) {
@@ -241,7 +177,8 @@ int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
             } else {
                 item->goal_change_mode = UNKNOWN;
             }
-        } else if (strcmp("stop_kind", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("stop_kind")) {
             if (strcmp(STOP_KIND_TIME_STR, argv[i]) == 0) {
                 item->stop_kind = STOP_KIND_TIME;
             } else if (strcmp(STOP_KIND_GOAL_STR, argv[i]) == 0) {
@@ -249,8 +186,10 @@ int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
             } else {
                 item->stop_kind = UNKNOWN;
             }
-        } else if (strcmp("next_step_id", azColName[i]) == 0) {
+            c++;
+        } else if (DB_COLUMN_IS("next_step_id")) {
             item->next_step_id = atoi(argv[i]);
+            c++;
         } else {
 #ifdef MODE_DEBUG
             fprintf(stderr, "loadStep_callback: unknown column: %s\n", azColName[i]);
@@ -258,6 +197,12 @@ int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
             return EXIT_FAILURE;
         }
     }
+    #define N 6
+    if (c != N) {
+        fprintf(stderr, "%s(): required %d columns but %d found\n", __FUNCTION__, N, c);
+        return EXIT_FAILURE;
+    }
+#undef N
     item->state = INIT;
     if (!checkStep(item)) {
         return EXIT_FAILURE;
@@ -265,29 +210,59 @@ int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
     return EXIT_SUCCESS;
 }
 
-int addProgById(int prog_id, ProgList *list, PeerList *pl, const char *db_path) {
+int addProgById(int prog_id, ProgList *list, PeerList *peer_list, sqlite3 *db_data, const char *db_data_path) {
+    extern struct timespec cycle_duration;
     Prog *rprog = getProgById(prog_id, list);
-    if (rprog != NULL) {//program is already running
+    if (rprog != NULL) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "WARNING: addProgById: program with id = %d is being controlled by program\n", rprog->id);
+        fprintf(stderr, "%s(): program with id = %d is being controlled by program\n", __FUNCTION__, rprog->id);
 #endif
         return 0;
     }
-    sqlite3 *db;
-    if (!db_open(db_path, &db)) {
+
+    Prog *item = malloc(sizeof *(item));
+    if (item == NULL) {
+        fprintf(stderr, "%s(): failed to allocate memory\n", __FUNCTION__);
         return 0;
     }
-    ProgData data = {db, pl, list};
-    char q[LINE_SIZE];
-    snprintf(q, sizeof q, "select " PROG_FIELDS " from prog where id=%d", prog_id);
-    if (!db_exec(db, q, loadProg_callback, (void*) &data)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "addProgById: query failed: %s\n", q);
-#endif
-        sqlite3_close(db);
+    memset(item, 0, sizeof *item);
+    item->id = prog_id;
+    item->next = NULL;
+    item->cycle_duration = cycle_duration;
+    if (!initMutex(&item->mutex)) {
+        free(item);
         return 0;
     }
-    sqlite3_close(db);
+    if (!initClient(&item->sock_fd, WAIT_RESP_TIMEOUT)) {
+        freeMutex(&item->mutex);
+        free(item);
+        return 0;
+    }
+    if (!getProgByIdFDB(item->id, item, peer_list, db_data, db_data_path)) {
+        freeSocketFd(&item->sock_fd);
+        freeMutex(&item->mutex);
+        free(item);
+        return 0;
+    }
+    item->slave.peer.fd = &item->sock_fd;
+    if (!checkProg(item)) {
+        freeSocketFd(&item->sock_fd);
+        freeMutex(&item->mutex);
+        free(item);
+        return 0;
+    }
+    if (!addProg(item, list)) {
+        freeSocketFd(&item->sock_fd);
+        freeMutex(&item->mutex);
+        free(item);
+        return 0;
+    }
+    if (!createMThread(&item->thread, &threadFunction, item)) {
+        freeSocketFd(&item->sock_fd);
+        freeMutex(&item->mutex);
+        free(item);
+        return 0;
+    }
     return 1;
 }
 
@@ -300,15 +275,10 @@ int deleteProgById(int id, ProgList *list, const char* db_path) {
     curr = list->top;
     while (curr != NULL) {
         if (curr->id == id) {
-            sqlite3 *db;
-            if (db_open(db_path, &db)) {
-                saveProgLoad(curr->id, 0, db);
-                sqlite3_close(db);
-            }
             if (prev != NULL) {
-                lockProg(prev);
+                lockMutex(&prev->mutex);
                 prev->next = curr->next;
-                unlockProg(prev);
+                unlockMutex(&prev->mutex);
             } else {//curr=top
                 lockProgList();
                 list->top = curr->next;
@@ -318,10 +288,9 @@ int deleteProgById(int id, ProgList *list, const char* db_path) {
                 list->last = prev;
             }
             list->length--;
-            //we will wait other threads to finish curr program and then we will free it
-            lockProg(curr);
-            unlockProg(curr);
-            free(curr);
+            stopProgThread(curr);
+            db_saveTableFieldInt("prog", "load", curr->id, 0, NULL, db_data_path);
+            freeProg(curr);
 #ifdef MODE_DEBUG
             printf("prog with id: %d deleted from prog_list\n", id);
 #endif
@@ -335,52 +304,43 @@ int deleteProgById(int id, ProgList *list, const char* db_path) {
     return done;
 }
 
-int loadActiveProg(ProgList *list, PeerList *pl, char *db_path) {
+int loadActiveProg_callback(void *d, int argc, char **argv, char **azColName) {
+    ProgData *data = d;
+    for (int i = 0; i < argc; i++) {
+        if (DB_COLUMN_IS("id")) {
+            int id = atoi(argv[i]);
+            printf("%s: %d\n", __FUNCTION__, id);
+            addProgById(id, data->prog_list, data->peer_list, data->db_data, NULL);
+        } else {
+#ifdef MODE_DEBUG
+            fprintf(stderr, "%s(): unknown column\n", __FUNCTION__);
+#endif
+        }
+    }
+    return EXIT_SUCCESS;
+}
+
+int loadActiveProg(ProgList *list, PeerList *peer_list, char *db_path) {
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
     }
-    ProgData data = {db, pl, list};
-    char *q = "select " PROG_FIELDS " from prog where load=1";
-    if (!db_exec(db, q, loadProg_callback, (void*) &data)) {
+    ProgData data = {.prog_list = list, .peer_list = peer_list, .db_data = db};
+    char *q = "select id from prog where load=1";
+    if (!db_exec(db, q, loadActiveProg_callback, &data)) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "loadActiveProg: query failed: %s\n", q);
+        fprintf(stderr, "%s(): query failed\n", __FUNCTION__);
 #endif
         sqlite3_close(db);
         return 0;
     }
     sqlite3_close(db);
     return 1;
-}
-
-int loadAllProg(ProgList *list, PeerList *pl, char *db_path) {
-    sqlite3 *db;
-    if (!db_open(db_path, &db)) {
-        return 0;
-    }
-    ProgData data = {db, pl, list};
-    char *q = "select " PROG_FIELDS " from prog";
-    if (!db_exec(db, q, loadProg_callback, (void*) &data)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "loadAllProg: query failed: %s\n", q);
-#endif
-        sqlite3_close(db);
-        return 0;
-    }
-    sqlite3_close(db);
-    return 1;
-}
-
-int reloadProgById(int id, ProgList *list, PeerList *pl, const char* db_path) {
-    if (deleteProgById(id, list, db_path)) {
-        return 1;
-    }
-    return addProgById(id, list, pl, db_path);
 }
 
 int getStepByIdFdb(Step *item, int id, const char *db_path) {
     Step tmp;
-    tmp.state=UNKNOWN;
+    tmp.state = UNKNOWN;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
@@ -395,16 +355,16 @@ int getStepByIdFdb(Step *item, int id, const char *db_path) {
         return 0;
     }
     sqlite3_close(db);
-    if(tmp.state!=INIT){
+    if (tmp.state != INIT) {
         return 0;
     }
-    *item=tmp;
+    *item = tmp;
     return 1;
 }
 
 int getRepeatByIdFdb(Repeat *item, int id, const char *db_path) {
     Repeat tmp;
-    tmp.state=UNKNOWN;
+    tmp.state = UNKNOWN;
     sqlite3 *db;
     if (!db_open(db_path, &db)) {
         return 0;
@@ -419,9 +379,9 @@ int getRepeatByIdFdb(Repeat *item, int id, const char *db_path) {
         return 0;
     }
     sqlite3_close(db);
-    if(tmp.state!=INIT){
+    if (tmp.state != INIT) {
         return 0;
     }
-    *item=tmp;
+    *item = tmp;
     return 1;
 }
