@@ -15,9 +15,6 @@ struct timespec cycle_duration = {0, 0};
 Mutex progl_mutex = MUTEX_INITIALIZER;
 Mutex db_data_mutex = MUTEX_INITIALIZER;
 
-I1List i1l;
-I2List i2l;
-
 PeerList peer_list;
 ProgList prog_list = {NULL, NULL, 0};
 
@@ -68,43 +65,19 @@ void initApp() {
     if (!initMutex(&db_data_mutex)) {
         exit_nicely_e("initApp: failed to initialize prog mutex\n");
     }
-
     if (!initServer(&sock_fd, sock_port)) {
         exit_nicely_e("initApp: failed to initialize udp server\n");
     }
 }
 
 int initData() {
-    if (!initI1List(&i1l, ACP_BUFFER_MAX_SIZE)) {
-#ifdef MODE_DEBUG
-        fputs("initData(): failed to allocate memory for i1l\n", stderr);
-#endif
-        return 0;
-    }
-    if (!initI2List(&i2l, ACP_BUFFER_MAX_SIZE)) {
-#ifdef MODE_DEBUG
-        fputs("initData(): failed to allocate memory for i2l\n", stderr);
-#endif
-        FREE_LIST(&i1l);
-        return 0;
-    }
     if (!config_getPeerList(&peer_list, NULL, db_public_path)) {
-#ifdef MODE_DEBUG
-        fputs("initData(): failed to allocate memory for peer_list\n", stderr);
-#endif
-        FREE_LIST(&i2l);
-        FREE_LIST(&i1l);
         return 0;
     }
     if (lockMutex(&db_data_mutex)) {
         if (!loadActiveProg(&prog_list, &peer_list, db_data_path)) {
-#ifdef MODE_DEBUG
-            fputs("initData(): failed to load active programs\n", stderr);
-#endif
             freeProgList(&prog_list);
-            FREE_LIST(&peer_list);
-            FREE_LIST(&i2l);
-            FREE_LIST(&i1l);
+            freePeerList(&peer_list);
             return 0;
         }
         unlockMutex(&db_data_mutex);
@@ -119,7 +92,8 @@ int initData() {
 void serverRun(int *state, int init_state) {
     SERVER_HEADER
     SERVER_APP_ACTIONS
-
+    DEF_SERVER_I1LIST
+    DEF_SERVER_I2LIST
     if (ACP_CMD_IS(ACP_CMD_PROG_STOP)) {
         PARSE_I1LIST
         for (int i = 0; i < i1l.length; i++) {
@@ -583,9 +557,7 @@ void freeData() {
     stopAllProgThreads(&prog_list);
     secure();
     freeProgList(&prog_list);
-    FREE_LIST(&peer_list);
-    FREE_LIST(&i2l);
-    FREE_LIST(&i1l);
+    freePeerList(&peer_list);
 #ifdef MODE_DEBUG
     puts("freeData: done");
 #endif
@@ -625,7 +597,7 @@ int main(int argc, char** argv) {
     int data_initialized = 0;
     while (1) {
 #ifdef MODE_DEBUG
-        printf("main(): %s %d\n", getAppState(app_state), data_initialized);
+        printf("%s(): %s %d\n", F,getAppState(app_state), data_initialized);
 #endif
         switch (app_state) {
             case APP_INIT:

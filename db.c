@@ -14,7 +14,7 @@ int getProg_callback(void *d, int argc, char **argv, char **azColName) {
             Peer *peer = getPeerById(argv[i], data->peer_list);
             if (peer == NULL) {
 #ifdef MODE_DEBUG
-                fprintf(stderr, "%s(): no peer with id %s found\n", __FUNCTION__, argv[i]);
+                fprintf(stderr, "%s(): no peer with id %s found\n", F, argv[i]);
 #endif
                 return EXIT_FAILURE;
             }
@@ -40,14 +40,14 @@ int getProg_callback(void *d, int argc, char **argv, char **azColName) {
             c++;
         } else {
 #ifdef MODE_DEBUG
-            fprintf(stderr, "%s(): unknown column\n", __FUNCTION__);
+            fprintf(stderr, "%s(): unknown column\n", F);
 #endif
 
         }
     }
 #define N 8
     if (c != N) {
-        fprintf(stderr, "%s(): required %d columns but %d found\n", __FUNCTION__, N, c);
+        fprintf(stderr, "%s(): required %d columns but %d found\n", F, N, c);
         return EXIT_FAILURE;
     }
 #undef N
@@ -65,7 +65,7 @@ int getProg_callback(void *d, int argc, char **argv, char **azColName) {
 int getProgByIdFDB(int prog_id, Prog *item, PeerList *em_list, sqlite3 *dbl, const char *db_path) {
     if (dbl != NULL && db_path != NULL) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): dbl xor db_path expected\n", __FUNCTION__);
+        fprintf(stderr, "%s(): dbl xor db_path expected\n", F);
 #endif
         return 0;
     }
@@ -84,7 +84,7 @@ int getProgByIdFDB(int prog_id, Prog *item, PeerList *em_list, sqlite3 *dbl, con
     snprintf(q, sizeof q, "select " PROG_FIELDS " from prog where id=%d", prog_id);
     if (!db_exec(db, q, getProg_callback, &data)) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): query failed\n", __FUNCTION__);
+        fprintf(stderr, "%s(): query failed\n", F);
 #endif
         if (close)sqlite3_close(db);
         return 0;
@@ -96,7 +96,7 @@ int getProgByIdFDB(int prog_id, Prog *item, PeerList *em_list, sqlite3 *dbl, con
 int addProg(Prog *item, ProgList *list) {
     if (list->length >= INT_MAX) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): can not load prog with id=%d - list length exceeded\n", __FUNCTION__, item->id);
+        fprintf(stderr, "%s(): can not load prog with id=%d - list length exceeded\n", F, item->id);
 #endif
         return 0;
     }
@@ -112,7 +112,7 @@ int addProg(Prog *item, ProgList *list) {
     list->last = item;
     list->length++;
 #ifdef MODE_DEBUG
-    printf("%s(): prog with id=%d loaded\n", __FUNCTION__, item->id);
+    printf("%s(): prog with id=%d loaded\n", F, item->id);
 #endif
     return 1;
 }
@@ -143,7 +143,7 @@ int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
     }
     #define N 4
     if (c != N) {
-        fprintf(stderr, "%s(): required %d columns but %d found\n", __FUNCTION__, N, c);
+        fprintf(stderr, "%s(): required %d columns but %d found\n", F, N, c);
         return EXIT_FAILURE;
     }
 #undef N
@@ -199,7 +199,7 @@ int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
     }
     #define N 6
     if (c != N) {
-        fprintf(stderr, "%s(): required %d columns but %d found\n", __FUNCTION__, N, c);
+        fprintf(stderr, "%s(): required %d columns but %d found\n", F, N, c);
         return EXIT_FAILURE;
     }
 #undef N
@@ -215,14 +215,14 @@ int addProgById(int prog_id, ProgList *list, PeerList *peer_list, sqlite3 *db_da
     Prog *rprog = getProgById(prog_id, list);
     if (rprog != NULL) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): program with id = %d is being controlled by program\n", __FUNCTION__, rprog->id);
+        fprintf(stderr, "%s(): program with id = %d is being controlled by program\n", F, rprog->id);
 #endif
         return 0;
     }
 
     Prog *item = malloc(sizeof *(item));
     if (item == NULL) {
-        fprintf(stderr, "%s(): failed to allocate memory\n", __FUNCTION__);
+        fprintf(stderr, "%s(): failed to allocate memory\n", F);
         return 0;
     }
     memset(item, 0, sizeof *item);
@@ -309,11 +309,11 @@ int loadActiveProg_callback(void *d, int argc, char **argv, char **azColName) {
     for (int i = 0; i < argc; i++) {
         if (DB_COLUMN_IS("id")) {
             int id = atoi(argv[i]);
-            printf("%s: %d\n", __FUNCTION__, id);
+            printf("%s: %d\n", F, id);
             addProgById(id, data->prog_list, data->peer_list, data->db_data, NULL);
         } else {
 #ifdef MODE_DEBUG
-            fprintf(stderr, "%s(): unknown column\n", __FUNCTION__);
+            fprintf(stderr, "%s(): unknown column\n", F);
 #endif
         }
     }
@@ -329,7 +329,7 @@ int loadActiveProg(ProgList *list, PeerList *peer_list, char *db_path) {
     char *q = "select id from prog where load=1";
     if (!db_exec(db, q, loadActiveProg_callback, &data)) {
 #ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): query failed\n", __FUNCTION__);
+        fprintf(stderr, "%s(): query failed\n", F);
 #endif
         sqlite3_close(db);
         return 0;
