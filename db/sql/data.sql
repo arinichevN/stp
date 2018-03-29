@@ -1,3 +1,8 @@
+CREATE TABLE "peer" (
+    "id" TEXT NOT NULL,
+    "port" INTEGER NOT NULL,
+    "ip_addr" TEXT NOT NULL
+);
 CREATE TABLE "prog"
 (
   "id" INTEGER PRIMARY KEY,

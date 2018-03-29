@@ -8,6 +8,7 @@
 #include "lib/app.h"
 #include "lib/configl.h"
 #include "lib/timef.h"
+#include "lib/tsv.h"
 #include "lib/acp/main.h"
 #include "lib/acp/app.h"
 #include "lib/acp/regulator.h"

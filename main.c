@@ -3,8 +3,8 @@
 
 int app_state = APP_INIT;
 
-char db_data_path[LINE_SIZE];
-char db_public_path[LINE_SIZE];
+TSVresult config_tsv = TSVRESULT_INITIALIZER;
+char * db_data_path;
 
 int sock_port = -1;
 int sock_fd = -1;
@@ -15,50 +15,37 @@ struct timespec cycle_duration = {0, 0};
 Mutex progl_mutex = MUTEX_INITIALIZER;
 Mutex db_data_mutex = MUTEX_INITIALIZER;
 
-PeerList peer_list;
-ProgList prog_list = {NULL, NULL, 0};
+PeerList peer_list= LIST_INITIALIZER;
+ProgList prog_list= LLIST_INITIALIZER;
 
 #include "util.c"
 #include "db.c"
 
-int readSettings() {
-#ifdef MODE_DEBUG
-    printf("readSettings: configuration file to read: %s\n", CONFIG_FILE);
-#endif
-    FILE* stream = fopen(CONFIG_FILE, "r");
-    if (stream == NULL) {
-#ifdef MODE_DEBUG
-        perror("readSettings()");
-#endif
+int readSettings(TSVresult* r, const char *data_path, int *port, struct timespec *cd, char **db_data_path) {
+    if (!TSVinit(r, data_path)) {
         return 0;
     }
-    skipLine(stream);
-    int n;
-    n = fscanf(stream, "%d\t%ld\t%ld\t%255s\t%255s\n",
-            &sock_port,
-            &cycle_duration.tv_sec,
-            &cycle_duration.tv_nsec,
-            db_data_path,
-            db_public_path
-            );
-    if (n != 5) {
-        fclose(stream);
-#ifdef MODE_DEBUG
-        fputs("ERROR: readSettings: bad format\n", stderr);
-#endif
+    int _port = TSVgetis(r, 0, "port");
+    int _cd_sec = TSVgetis(r, 0, "cd_sec");
+    int _cd_nsec = TSVgetis(r, 0, "cd_nsec");
+    char *_db_data_path = TSVgetvalues(r, 0, "db_data_path");
+    if (TSVnullreturned(r)) {
         return 0;
     }
-    fclose(stream);
-#ifdef MODE_DEBUG
-    printf("readSettings: \n\tsock_port: %d, \n\tcycle_duration: %ld sec %ld nsec, \n\tdb_data_path: %s, \n\tdb_public_path: %s\n", sock_port, cycle_duration.tv_sec, cycle_duration.tv_nsec, db_data_path, db_public_path);
-#endif
+    *port = _port;
+    cd->tv_sec = _cd_sec;
+    cd->tv_nsec = _cd_nsec;
+    *db_data_path = _db_data_path;
     return 1;
 }
 
 void initApp() {
-    if (!readSettings()) {
+    if (!readSettings(&config_tsv, CONFIG_FILE, &sock_port, &cycle_duration, &db_data_path)) {
         exit_nicely_e("initApp: failed to read settings\n");
     }
+    #ifdef MODE_DEBUG
+    printf("%s(): \n\tsock_port: %d, \n\tcycle_duration: %ld sec %ld nsec, \n\tdb_data_path: %s\n", F, sock_port, cycle_duration.tv_sec, cycle_duration.tv_nsec, db_data_path);
+#endif
     if (!initMutex(&progl_mutex)) {
         exit_nicely_e("initApp: failed to initialize prog mutex\n");
     }
@@ -71,7 +58,7 @@ void initApp() {
 }
 
 int initData() {
-    if (!config_getPeerList(&peer_list, NULL, db_public_path)) {
+    if (!config_getPeerList(&peer_list, NULL, db_data_path)) {
         return 0;
     }
     if (lockMutex(&db_data_mutex)) {
@@ -568,6 +555,7 @@ void freeApp() {
     freeSocketFd(&sock_fd);
     freeMutex(&db_data_mutex);
     freeMutex(&progl_mutex);
+    TSVclear(&config_tsv);
 }
 
 void exit_nicely() {

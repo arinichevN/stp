@@ -8,53 +8,55 @@ int getProg_callback(void *d, int argc, char **argv, char **azColName) {
     int c = 0;
     for (int i = 0; i < argc; i++) {
         if (DB_COLUMN_IS("id")) {
-            item->id = atoi(argv[i]);
+            item->id = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("peer_id")) {
-            Peer *peer = getPeerById(argv[i], data->peer_list);
+            Peer *peer = getPeerById(DB_COLUMN_VALUE, data->peer_list);
             if (peer == NULL) {
 #ifdef MODE_DEBUG
-                fprintf(stderr, "%s(): no peer with id %s found\n", F, argv[i]);
+                fprintf(stderr, "%s(): no peer with id %s found\n", F, DB_COLUMN_VALUE);
 #endif
                 return EXIT_FAILURE;
             }
             item->slave.peer = *peer;
             c++;
         } else if (DB_COLUMN_IS("first_repeat_id")) {
-            item->first_repeat_id = atoi(argv[i]);
+            item->first_repeat_id = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("remote_id")) {
-            item->slave.remote_id = atoi(argv[i]);
+            item->slave.remote_id = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("check")) {
-            item->slave.check = atoi(argv[i]);
+            item->slave.check = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("retry_count")) {
-            item->slave.r1.retry_count = item->slave.r2.retry_count = item->slave.r3.retry_count = atoi(argv[i]);
+            item->slave.r1.retry_count = item->slave.r2.retry_count = item->slave.r3.retry_count = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("enable")) {
-            enable = atoi(argv[i]);
+            enable = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("load")) {
-            load = atoi(argv[i]);
+            load = atoi(DB_COLUMN_VALUE);
             c++;
         } else {
 #ifdef MODE_DEBUG
-            fprintf(stderr, "%s(): unknown column\n", F);
+            fprintf(stderr, "%s(): unknown column: %s\n", F, DB_COLUMN_NAME);
 #endif
 
         }
     }
 #define N 8
     if (c != N) {
+#ifdef MODE_DEBUG
         fprintf(stderr, "%s(): required %d columns but %d found\n", F, N, c);
+#endif
         return EXIT_FAILURE;
     }
 #undef N
     if (enable) {
-        item->state=INIT;
+        item->state = INIT;
     } else {
-        item->state=OFF;
+        item->state = OFF;
     }
     if (!load) {
         db_saveTableFieldInt("prog", "load", item->id, 1, data->db_data, NULL);
@@ -83,9 +85,6 @@ int getProgByIdFDB(int prog_id, Prog *item, PeerList *em_list, sqlite3 *dbl, con
     ProgData data = {.peer_list = em_list, .prog = item, .db_data = db};
     snprintf(q, sizeof q, "select " PROG_FIELDS " from prog where id=%d", prog_id);
     if (!db_exec(db, q, getProg_callback, &data)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): query failed\n", F);
-#endif
         if (close)sqlite3_close(db);
         return 0;
     }
@@ -120,30 +119,32 @@ int addProg(Prog *item, ProgList *list) {
 int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
     Repeat *item = (Repeat *) d;
     memset(item, 0, sizeof *item);
-    int c=0;
+    int c = 0;
     for (int i = 0; i < argc; i++) {
         if (DB_COLUMN_IS("id")) {
-            item->id = atoi(argv[i]);
+            item->id = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("first_step_id")) {
-            item->first_step_id = atof(argv[i]);
+            item->first_step_id = atof(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("count")) {
-            item->count = atoi(argv[i]);
+            item->count = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("next_repeat_id")) {
-            item->next_repeat_id = atoi(argv[i]);
+            item->next_repeat_id = atoi(DB_COLUMN_VALUE);
             c++;
         } else {
 #ifdef MODE_DEBUG
-            fprintf(stderr, "loadRepeat_callback: unknown column: %s\n", azColName[i]);
+            fprintf(stderr, "%s(): unknown column: %s\n", F, DB_COLUMN_NAME);
 #endif
             return EXIT_FAILURE;
         }
     }
-    #define N 4
+#define N 4
     if (c != N) {
+#ifdef MODE_DEBUG
         fprintf(stderr, "%s(): required %d columns but %d found\n", F, N, c);
+#endif
         return EXIT_FAILURE;
     }
 #undef N
@@ -157,49 +158,51 @@ int loadRepeat_callback(void *d, int argc, char **argv, char **azColName) {
 int loadStep_callback(void *d, int argc, char **argv, char **azColName) {
     Step *item = (Step *) d;
     memset(item, 0, sizeof *item);
-    int c=0;
+    int c = 0;
     for (int i = 0; i < argc; i++) {
         if (DB_COLUMN_IS("id")) {
-            item->id = atoi(argv[i]);
+            item->id = atoi(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("goal")) {
-            item->goal = atof(argv[i]);
+            item->goal = atof(DB_COLUMN_VALUE);
             c++;
         } else if (DB_COLUMN_IS("duration")) {
-            item->duration.tv_sec = atoi(argv[i]);
+            item->duration.tv_sec = atoi(DB_COLUMN_VALUE);
             item->duration.tv_nsec = 0;
             c++;
         } else if (DB_COLUMN_IS("goal_change_mode")) {
-            if (strcmp(CHANGE_MODE_EVEN_STR, argv[i]) == 0) {
+            if (strcmp(CHANGE_MODE_EVEN_STR, DB_COLUMN_VALUE) == 0) {
                 item->goal_change_mode = CHANGE_MODE_EVEN;
-            } else if (strcmp(CHANGE_MODE_INSTANT_STR, argv[i]) == 0) {
+            } else if (strcmp(CHANGE_MODE_INSTANT_STR, DB_COLUMN_VALUE) == 0) {
                 item->goal_change_mode = CHANGE_MODE_INSTANT;
             } else {
                 item->goal_change_mode = UNKNOWN;
             }
             c++;
         } else if (DB_COLUMN_IS("stop_kind")) {
-            if (strcmp(STOP_KIND_TIME_STR, argv[i]) == 0) {
+            if (strcmp(STOP_KIND_TIME_STR, DB_COLUMN_VALUE) == 0) {
                 item->stop_kind = STOP_KIND_TIME;
-            } else if (strcmp(STOP_KIND_GOAL_STR, argv[i]) == 0) {
+            } else if (strcmp(STOP_KIND_GOAL_STR, DB_COLUMN_VALUE) == 0) {
                 item->stop_kind = STOP_KIND_GOAL;
             } else {
                 item->stop_kind = UNKNOWN;
             }
             c++;
         } else if (DB_COLUMN_IS("next_step_id")) {
-            item->next_step_id = atoi(argv[i]);
+            item->next_step_id = atoi(DB_COLUMN_VALUE);
             c++;
         } else {
 #ifdef MODE_DEBUG
-            fprintf(stderr, "loadStep_callback: unknown column: %s\n", azColName[i]);
+            fprintf(stderr, "%s(): unknown column: %s\n", F, DB_COLUMN_NAME);
 #endif
             return EXIT_FAILURE;
         }
     }
-    #define N 6
+#define N 6
     if (c != N) {
+#ifdef MODE_DEBUG
         fprintf(stderr, "%s(): required %d columns but %d found\n", F, N, c);
+#endif
         return EXIT_FAILURE;
     }
 #undef N
@@ -308,12 +311,11 @@ int loadActiveProg_callback(void *d, int argc, char **argv, char **azColName) {
     ProgData *data = d;
     for (int i = 0; i < argc; i++) {
         if (DB_COLUMN_IS("id")) {
-            int id = atoi(argv[i]);
-            printf("%s: %d\n", F, id);
+            int id = atoi(DB_COLUMN_VALUE);
             addProgById(id, data->prog_list, data->peer_list, data->db_data, NULL);
         } else {
 #ifdef MODE_DEBUG
-            fprintf(stderr, "%s(): unknown column\n", F);
+            fprintf(stderr, "%s(): unknown column: %s\n", F, DB_COLUMN_NAME);
 #endif
         }
     }
@@ -328,9 +330,6 @@ int loadActiveProg(ProgList *list, PeerList *peer_list, char *db_path) {
     ProgData data = {.prog_list = list, .peer_list = peer_list, .db_data = db};
     char *q = "select id from prog where load=1";
     if (!db_exec(db, q, loadActiveProg_callback, &data)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "%s(): query failed\n", F);
-#endif
         sqlite3_close(db);
         return 0;
     }
@@ -348,9 +347,6 @@ int getStepByIdFdb(Step *item, int id, const char *db_path) {
     char q[LINE_SIZE];
     snprintf(q, sizeof q, "select id,goal,duration,goal_change_mode,stop_kind,next_step_id from step where id=%d limit 1", id);
     if (!db_exec(db, q, loadStep_callback, (void*) &tmp)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "getStepByIdFdb: query failed: %s\n", q);
-#endif
         sqlite3_close(db);
         return 0;
     }
@@ -372,9 +368,6 @@ int getRepeatByIdFdb(Repeat *item, int id, const char *db_path) {
     char q[LINE_SIZE];
     snprintf(q, sizeof q, "select id,first_step_id,count,next_repeat_id from repeat where id=%d limit 1", id);
     if (!db_exec(db, q, loadRepeat_callback, (void*) &tmp)) {
-#ifdef MODE_DEBUG
-        fprintf(stderr, "getRepeatByIdFdb: query failed: %s\n", q);
-#endif
         sqlite3_close(db);
         return 0;
     }
