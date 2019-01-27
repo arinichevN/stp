@@ -19,6 +19,10 @@
 #define WDAY_NUM 7
 //CLOCK_PROCESS_CPUTIME_ID
 
+//interval < 1000 usec
+#define DELAY_US_BUSY(interval) delayTsBusy ( (struct timespec) {0,interval*1000} )
+#define timespec2double(d, ts) d=(ts)->tv_sec + (double) (ts)->tv_nsec*NANO_FACTOR
+#define double2timespec(ts, d)  (ts)->tv_sec = d; (ts)->tv_nsec = ( d - (long int ) d ) / NANO_FACTOR;
 #define usec2timespec(us, ts)             \
   (ts)->tv_sec = (time_t) (us / 1000000);            \
   (ts)->tv_nsec = (long) (us % 1000000) * 1000;
@@ -48,7 +52,7 @@
       (result)->tv_nsec += 1000000000;           \
     }               \
   } while (0)
-#define timespecclear(tvp) ((tvp)->tv_sec = (tvp)->tv_nsec = 0)
+#define timespecclear(tvp) ((tvp)->tv_sec = (tvp)->tv_nsec = 0L)
 
 typedef struct {
     int month;
@@ -65,7 +69,9 @@ typedef struct {
 } Ton_ts;
 
 typedef struct {
-    time_t start;
+    struct timespec start;
+    struct timespec interval;
+    struct timespec end;
     int ready;
 } Ton;
 
@@ -73,7 +79,13 @@ extern struct timespec getCurrentTime();
 
 extern void delayUsBusy(unsigned int td);
 
+extern void delayTsBusy(struct timespec interval);
+
 extern void delayUsBusyC(unsigned int td);
+
+extern void delayTsBusyRest ( struct timespec interval, struct timespec start );
+
+extern void delayTsIdleRest ( struct timespec interval, struct timespec start );
 
 extern void delayUsIdle(unsigned int td);
 
@@ -89,9 +101,19 @@ extern void ton_ts_reset(Ton_ts *t);
 
 extern void ton_ts_touch(Ton_ts *t);
 
-extern struct timespec getTimePassed_tv(const Ton_ts *t);
+extern int ton ( Ton *item ) ;
 
-extern time_t getTimePassed(const Ton *t);
+extern int toni (struct timespec interval, Ton *item );
+
+extern void tonSetInterval ( struct timespec interval, Ton *item  ) ;
+
+extern void tonReset ( Ton *item  ) ;
+
+extern struct timespec tonTimePassed ( const Ton *item ) ;
+
+extern struct timespec tonTimeRest ( const Ton *item ) ;
+
+extern struct timespec getTimePassed_tv(const Ton_ts *t);
 
 extern struct timespec getTimePassed_ts(struct timespec t);
 
@@ -103,15 +125,11 @@ extern int toyHasCome(const TOY *current, const TOY *wanted);
 
 extern int todHasCome(long int target, long int current);
 
-extern int getTimeRestS(int interval, Ton *t);
-
 extern int timeHasPassed(struct timespec interval, struct timespec start, struct timespec now);
 
 extern void changeTimeT(time_t *slave, time_t change);
 
 extern void changeInt(int *v, int inc);
-
-extern int ton(time_t interval, Ton *t);
 
 extern long int getCurrTOD();
 

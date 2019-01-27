@@ -18,6 +18,7 @@
 #include "../crc.h"
 #include "../lcorrection.h"
 #include "../lreduction.h"
+#include "../filter/common.h"
 
 #define ACP_RETRY_NUM 12
 
@@ -44,13 +45,17 @@
 //the same for request and response
 #define ACP_BLOCK_IND_CRC 3
 
-#define ACP_FLOAT_FORMAT "%.3f"
+#define ACP_FLOAT_FORMAT_OUT "%.3f"
+#define ACP_FLOAT_FORMAT_IN "%lf"
 
 #define ACP_SEND_STR(V) acp_responseSendStr(V, ACP_MIDDLE_PACK, response, peer);
 
+#define ACP_PEER_ID_LENGTH  16
+#define ACP_PEER_ADDR_STR_LENGTH  32
+
 typedef struct {
-    char * id;
-    char * addr_str;
+    char id[ACP_PEER_ID_LENGTH];
+    char addr_str[ACP_PEER_ADDR_STR_LENGTH];
     int port;
     int *fd;
     struct sockaddr_in addr;
@@ -60,8 +65,10 @@ typedef struct {
 } Peer;
 
 DEC_LIST(Peer)
-DEC_FUN_LIST_INIT(Peer)
-extern void freePeerList(PeerList *list);
+extern int initPeer(Peer * item, int *fd);
+extern int initPeerList(PeerList * item, int *fd);
+extern int cpPeer ( Peer *dest, const Peer * src );
+
 
 typedef struct {
     char cmd[ACP_COMMAND_MAX_SIZE];
@@ -90,7 +97,6 @@ typedef struct {
 typedef int I1;
 
 DEC_LIST(I1)
-DEC_FUN_LIST_INIT(I1)
 
 typedef struct {
     int p0;
@@ -98,7 +104,6 @@ typedef struct {
 } I2;
 
 DEC_LIST(I2)
-DEC_FUN_LIST_INIT(I2)
 
 typedef struct {
     int p0;
@@ -106,36 +111,29 @@ typedef struct {
     int p2;
 } I3;
 DEC_LIST(I3)
-DEC_FUN_LIST_INIT(I3)
 
-typedef float F1;
+typedef double F1;
 DEC_LIST(F1)
-DEC_FUN_LIST_INIT(F1)
 
 typedef double D1;
-
 DEC_LIST(D1)
-DEC_FUN_LIST_INIT(D1)
 
 typedef struct {
     int p0;
-    float p1;
+    double p1;
 } I1F1;
 
 DEC_LIST(I1F1)
-DEC_FUN_LIST_INIT(I1F1)
 
 typedef struct {
     int p0;
     uint32_t p1;
 } I1U321;
 DEC_LIST(I1U321)
-DEC_FUN_LIST_INIT(I1U321)
 
 typedef char S1;
 
 DEC_LIST(S1)
-DEC_FUN_LIST_INIT(S1)
 
 typedef struct {
     int p0;
@@ -143,7 +141,6 @@ typedef struct {
 } I1S1;
 
 DEC_LIST(I1S1)
-DEC_FUN_LIST_INIT(I1S1)
 
 typedef struct {
     char p0[LINE_SIZE];
@@ -151,61 +148,65 @@ typedef struct {
 } S2;
 
 DEC_LIST(S2)
-DEC_FUN_LIST_INIT(S2)
 
 typedef struct {
     int id;
-    float value;
+    double value;
     struct timespec tm;
     int state;
 } FTS;
 
 DEC_LIST(FTS)
-DEC_FUN_LIST_INIT(FTS)
 
 typedef struct {
     int id;
-    int remote_id;
-    Peer peer;
     int value;
+    struct timespec tm;
+    int state;
+} ITS;
+
+DEC_LIST(ITS)
+
+//remote channel
+typedef struct {
+    int id;
+    int channel_id;
+    Peer peer;
+} RChannel;
+
+DEC_LIST(RChannel)
+
+extern int cpRChannel(RChannel *dest, const RChannel *src);
+extern int getRChannelFromList ( RChannel *dest , const RChannelList *list, int id );
+extern int initRChannel ( RChannel* item, int *fd );
+
+typedef struct {
+    RChannel remote_channel;
+    ITS input;
     struct timespec last_read_time;
     struct timespec interval_min;
     int last_return;
-} SensorInt;
+} SensorITS;
 
-DEC_LIST(SensorInt)
-DEC_FUN_LIST_INIT(SensorInt)
+DEC_LIST(SensorITS)
 
 typedef struct {
-    int id;
-    int remote_id;
-    Peer peer;
-    FTS value;
+    RChannel remote_channel;
+    FTS input;
     struct timespec last_read_time;
     struct timespec interval_min;
     int last_return;
 } SensorFTS;
 
 DEC_LIST(SensorFTS)
-DEC_FUN_LIST_INIT(SensorFTS)
 
 typedef struct {
-    int id;
-    int remote_id;
-    Peer peer;
-    float last_output; //we will keep last output value in order not to repeat the same queries to peers
-    float pwm_rsl; //max duty cycle value (see lib/pid.h PWM_RSL)
+    RChannel remote_channel;
+    double last_output; //we will keep last output value in order not to repeat the same queries to peers
+    double output_min; //max duty cycle value (see lib/pid.h PWM_RSL)
+    double output_max;
 } EM; //executive mechanism
 DEC_LIST(EM)
-DEC_FUN_LIST_INIT(EM)
-
-typedef struct {
-    int id;
-    int remote_id;
-    Peer peer;
-} Channel;
-DEC_LIST(Channel)
-DEC_FUN_LIST_INIT(Channel)
 
 #define FUN_ACP_REQUEST_DATA_TO(T) void acp_requestDataTo ## T(ACPRequest *request, T *list){\
 acp_dataTo ## T(request->data, list);\
@@ -219,12 +220,6 @@ acp_dataTo ## T(request->data, list);\
 #define ACP_CMD_IS(V) acp_cmdcmp(&request, V)
 #define ACP_REQUEST_CREATE ACPRequest request; acp_requestInit(&request);
 #define ACP_RESPONSE_CREATE ACPResponse response; acp_responseInit(&response);
-
-DEC_FUN_LIST_GET_BY_IDSTR(Peer)
-
-DEC_FUN_LIST_GET_BY_ID(SensorFTS)
-
-DEC_FUN_LIST_GET_BY_ID(EM)
 
 extern int acp_responseStrCat(ACPResponse *item, const char *str);
 
@@ -294,21 +289,25 @@ DEC_FUN_ACP_RESPONSE_READ(I1U321List)
 
 DEC_FUN_ACP_RESPONSE_READ(FTSList)
 
-extern int acp_setEMFloat(EM *em, float output);
+DEC_FUN_ACP_RESPONSE_READ(ITSList)
 
-extern int acp_setEMInt(EM *em, int output);
+extern int acp_setRChannelFloat(RChannel *rchannel, double output);
 
-extern int acp_readSensorInt(SensorInt *s);
+extern int acp_setRChannelInt(RChannel *rchannel, int output);
 
-extern int acp_readSensorFTS(SensorFTS *s);
+extern int acp_getRChannelITS ( ITS *output, RChannel *rchannel );
 
-extern int acp_getFTS(FTS *output, Peer *peer, int remote_id);
+extern int acp_getRChannelFTS ( FTS *output, RChannel *rchannel );
 
-extern int acp_getError(uint32_t *output, Peer *peer, int remote_id);
+extern int acp_getFTS(FTS *output, Peer *peer, int remote_channel_id);
 
-extern int acp_getProgEnabled(Peer *peer, int remote_id);
+extern int acp_getITS(ITS *output, Peer *peer, int remote_channel_id);
 
-extern int acp_peerItemSendCmd(Peer *peer, int remote_id, char *cmd);
+extern int acp_getError(uint32_t *output, Peer *peer, int remote_channel_id);
+
+extern int acp_getProgEnabled(Peer *peer, int remote_channel_id);
+
+extern int acp_peerItemSendCmd(Peer *peer, int remote_channel_id, char *cmd);
 
 extern void acp_pingPeer(Peer *item);
 
@@ -320,13 +319,11 @@ extern int acp_responseSendCurTime(ACPResponse *item, Peer *peer);
 
 extern int acp_sendCmdGetInt(Peer *peer, char* cmd, int *output);
 
-extern int acp_sendCmdGetFloat(Peer *peer, char* cmd, float *output);
+extern int acp_sendCmdGetFloat(Peer *peer, char* cmd, double *output);
 
-extern int acp_responseFTSCat(int id, float value, struct timespec tm, int state, ACPResponse *response);
+extern int acp_responseFTSCat(int id, double value, struct timespec tm, int state, ACPResponse *response);
 
 extern int acp_responseITSCat(int id, int value, struct timespec tm, int state, ACPResponse *response);
-
-extern void freePeer(PeerList *list);
 
 extern int acp_cmdcmp(ACPRequest *request, char * cmd);
 
@@ -341,6 +338,8 @@ extern void acp_sendPeerListInfo(PeerList *pl, ACPResponse *response, Peer *peer
 extern void acp_sendLCorrectionListInfo(LCorrectionList *list, ACPResponse *response, Peer *peer);
 
 extern void acp_sendLReductionListInfo(LReductionList *list, ACPResponse *response, Peer *peer);
+
+extern void acp_sendFilterListInfo(FilterList *list, ACPResponse *response, Peer *peer );
 
 DEC_FUN_ACP_REQUEST_DATA_TO(I1List)
 
@@ -365,6 +364,8 @@ DEC_FUN_ACP_REQUEST_DATA_TO(I1S1List)
 
 
 DEC_FUN_ACP_REQUEST_DATA_TO(FTSList)
+
+DEC_FUN_ACP_REQUEST_DATA_TO(ITSList)
 
 
 DEC_FUN_ACP_REQUEST_DATA_TO(S2List)

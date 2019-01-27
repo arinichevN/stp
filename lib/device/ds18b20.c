@@ -1,8 +1,8 @@
 
 #include "ds18b20.h"
 
-float dsToFloat(uint16_t v) {
-    float t;
+double dsToFloat(uint16_t v) {
+    double t;
     if (v >= 0x800) //temperture is negative
     {
         t = 0;
@@ -16,7 +16,7 @@ float dsToFloat(uint16_t v) {
         v = (v >> 4) & 0x00FF;
         v = v - 0x0001; //subtract 1
         v = ~v; //ones compliment
-        t = t - (float) (v & 0xFF);
+        t = t - (double) (v & 0xFF);
     } else //temperture is positive
     {
         t = 0;
@@ -63,7 +63,7 @@ int ds18b20_write_scratchpad(int pin, const uint8_t *addr, const uint8_t *data) 
     for (int i = 0; i < DS18B20_EEPROM_BYTE_NUM; i++) {
         onewire_send_byte(pin, data[i]);
     }
-    delayUsBusy(480);
+    DELAY_US_BUSY(480);
     return 1;
 }
 
@@ -73,7 +73,7 @@ int ds18b20_copy_scratchpad(int pin, const uint8_t *addr) {
         return 0;
     }
     onewire_send_byte(pin, DS18B20_CMD_COPY_SCRATCHPAD);
-    delayUsBusy(480);
+    DELAY_US_BUSY(480);
     return 1;
 }
 
@@ -85,7 +85,7 @@ int ds18b20_recall(int pin, const uint8_t *addr) {
     onewire_send_byte(pin, DS18B20_CMD_RECALL);
     while (!onewire_read_bit(pin)) {
     }
-    delayUsBusy(480);
+    DELAY_US_BUSY(480);
     return 1;
 }
 
@@ -152,7 +152,7 @@ int ds18b20_get_resolution(int pin, const uint8_t *addr, int *res) {
 void ds18b20_wait_convertion(int pin) {
     while (!onewire_read_bit(pin)) {
     }
-    delayUsBusy(480);
+    DELAY_US_BUSY(480);
 }
 
 int ds18b20_convert_t(int pin, const uint8_t *addr) {
@@ -176,7 +176,7 @@ int ds18b20_convert_t_all(int pin) {
 
 
 
-int ds18b20_read_temp(int pin, const uint8_t *addr, float * temp) {
+int ds18b20_read_temp(int pin, const uint8_t *addr, double * temp) {
     uint8_t scratchpad[DS18B20_SCRATCHPAD_BYTE_NUM];
     if (!ds18b20_read_scratchpad(pin, addr, scratchpad)) {
         return 0;
@@ -186,7 +186,7 @@ int ds18b20_read_temp(int pin, const uint8_t *addr, float * temp) {
     return 1;
 }
 
-int ds18b20_get_temp(int pin, const uint8_t *addr, float * temp) {
+int ds18b20_get_temp(int pin, const uint8_t *addr, double * temp) {
     uint8_t scratchpad[DS18B20_SCRATCHPAD_BYTE_NUM];
     if (!ds18b20_convert_t(pin, addr)) {
         return 0;
